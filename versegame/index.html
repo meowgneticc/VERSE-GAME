@@ -618,7 +618,8 @@
 </head>
 <body>
   <div id="app">
-    <header class="topbar">
+    <!-- Top bar -->
+<header class="topbar">
       <div class="brand">Verse</div>
       <div class="player-switch">
         <button id="myProfileBtn" class="secondary" style="padding:.25rem .7rem; margin-right:.5rem;">
@@ -631,7 +632,9 @@
       </div>
     </header>
 
+    <!-- Views -->
     <main>
+      <!-- FEED (Экран 1) -->
       <section id="view-feed" class="view active">
         <div class="view-head">
           <h1>Лента</h1>
@@ -644,6 +647,7 @@
         <ul id="feedList" class="feed-list"></ul>
       </section>
 
+      <!-- RELATIONS (Экран 2) -->
       <section id="view-relations" class="view">
         <div class="view-head">
           <h1>Отношения</h1>
@@ -651,6 +655,7 @@
         <div id="relationsList" class="relations"></div>
       </section>
 
+      <!-- CHARACTER PROFILE (Экран 2.5) -->
       <section id="view-character" class="view">
         <div class="view-head">
           <h1>Профиль персонажа</h1>
@@ -658,6 +663,7 @@
         <div id="characterView" class="char-view"></div>
       </section>
 
+      <!-- COMPOSE SOCIAL (Экран 3) -->
       <section id="view-compose" class="view">
         <div class="view-head">
           <h1>Создать пост</h1>
@@ -677,6 +683,7 @@
         </div>
       </section>
 
+      <!-- COMPOSE STORY (Экран 4) -->
       <section id="view-story" class="view">
         <div class="view-head">
           <h1>Сюжетный пост</h1>
@@ -702,6 +709,7 @@
         </div>
       </section>
 
+      <!-- DIRECT MESSAGES (Экран 5) -->
       <section id="view-dm" class="view">
         <div class="view-head">
           <h1 id="dmTitle">ЛС</h1>
@@ -724,6 +732,7 @@
         </div>
       </section>
 
+      <!-- REACTIONS HISTORY (Экран 6) -->
       <section id="view-reactions" class="view">
         <div class="view-head">
           <h1>Реакции персонажей</h1>
@@ -732,6 +741,7 @@
       </section>
     </main>
 
+    <!-- Tabbar -->
     <nav class="tabbar">
       <button class="tab active" data-target="feed" title="Лента">Лента</button>
       <button class="tab" data-target="relations" title="Отношения">Отношения</button>
@@ -742,6 +752,7 @@
     </nav>
   </div>
 
+  <!-- Modal: reactions after publish -->
   <div id="reactionModal" class="modal hidden">
     <div class="modal-card">
       <div class="modal-head">
@@ -787,57 +798,70 @@ function buildRelationsSummary(char) {
   return lines.join('\n');
 }
 
-// === ИИ (Gemini) ===
-// ИЗМЕНЕНО: Улучшенная версия с подробным логированием ошибок для отладки связи с API
-async function askAI(promptText) {
-  // Логируем начало запроса
-  console.log('➡️ Отправляю запрос к ИИ. Промпт:', clip(promptText, 100) + '...');
-  
+// === ИИ (универсальный) ===
+async function askAI(promptText, {timeoutMs = 20000} = {}) {
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), timeoutMs);
+
   try {
-    const startTime = Date.now();
-    // Убедись, что адрес /api/gemini верный для твоего сервера. 
     const res = await fetch('/api/gemini', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: promptText })
+      body: JSON.stringify({ text: promptText }),
+      signal: ctrl.signal
     });
-    const duration = Date.now() - startTime;
 
-    // 1. Проверка статуса HTTP (например, 404, 500)
     if (!res.ok) {
-      console.error(`❌ Ошибка API: HTTP Статус ${res.status} (${res.statusText}). Время: ${duration}ms.`);
-      // Пытаемся прочитать тело ответа, чтобы увидеть детали ошибки от сервера
-      const errorBody = await res.text().catch(() => "(Не удалось прочитать тело ошибки)");
-      console.error('Тело ответа с ошибкой:', errorBody);
+      console.error('AI HTTP error', res.status, res.statusText);
       return null;
     }
 
-    // 2. Попытка распарсить JSON
-    let data;
-    try {
-        data = await res.json();
-    } catch (jsonError) {
-        console.error(`❌ Ошибка API: Не удалось распарсить JSON (Проверь Content-Type ответа сервера). Время: ${duration}ms.`, jsonError);
-        return null;
-    }
+    const ct = res.headers.get('content-type') || '';
+    const payload = ct.includes('application/json') ? await res.json() : await res.text();
 
-    // 3. Проверка структуры ответа (наличие .ok и .answer)
-    // Твой код ожидает именно такой формат: { "ok": true, "answer": "..." }
-    if (!data.ok || !data.answer) {
-      console.error(`❌ Ошибка API: Неверный формат ответа (нет .ok или .answer). Время: ${duration}ms. Данные:`, data);
+    const pick = (d) => {
+      if (!d) return null;
+      if (typeof d === 'string') return d;
+      if (typeof d.answer === 'string') return d.answer;
+      if (typeof d.text === 'string') return d.text;
+      if (typeof d.output === 'string') return d.output;
+
+      if (Array.isArray(d.choices)) {
+        const ch = d.choices[0];
+        const t1 = ch?.message?.content ?? ch?.text;
+        if (typeof t1 === 'string') return t1;
+      }
+
+      if (Array.isArray(d.candidates)) {
+        const cand = d.candidates[0];
+        const parts = cand?.content?.parts || [];
+        const textPart = parts.find(p => typeof p.text === 'string');
+        if (textPart?.text) return textPart.text;
+      }
+
+      if (typeof d.content === 'string') return d.content;
+      if (typeof d.result === 'string') return d.result;
+
+      return null;
+    };
+
+    const raw = pick(payload);
+    if (!raw) {
+      console.error('AI: cannot extract text from payload', payload);
       return null;
     }
 
-    // Успех!
-    console.log(`✅ Ответ от AI получен (за ${duration}ms).`);
-    return data.answer.trim();
-    
+    const cleaned = String(raw).trim();
+    return cleaned || null;
+
   } catch (err) {
-    // Обработка ошибок fetch (например, CORS, обрыв соединения)
-    console.error('💥 Критическая ошибка сети (Fetch failed)! Проверьте CORS, URL или доступность сервера.', err);
+    console.error('AI network/timeout error', err);
     return null;
+  } finally {
+    clearTimeout(to);
   }
 }
+
 
 // === ВЫБОР, КТО БУДЕТ РЕАГИРОВАТЬ (1–5 персонажей) ===
 
@@ -1435,8 +1459,10 @@ function renderCharacterProfile(){
         placeholder="Подробное описание персонажа, его характер, травмы, отношения, триггеры и т.п.">${bio}</textarea>`
     : '';
 
+  // === ИЗМЕНЕНИЕ 1: Проверяем, наш ли это профиль ===
   const isOwnProfile = (c.id === state.activePlayerId);
   
+  // === ИЗМЕНЕНИЕ 2: Прячем блок отношений, если профиль наш ===
   let relationBlockHtml = '';
   if (!isOwnProfile) {
     relationBlockHtml = `
@@ -1458,6 +1484,7 @@ function renderCharacterProfile(){
     `;
   }
 
+  // === ИЗМЕНЕНИЕ 3: Прячем кнопку "ЛС", если профиль наш ===
   const actions = isEditingBio
     ? `
       <button class="primary" onclick="saveCharacterBio()">Сохранить описание</button>
@@ -1582,6 +1609,7 @@ box.innerHTML = state.characters.filter(c => c.id !== state.activePlayerId).map(
 // === создание обычного поста ===
 function setupComposeSocial(){
   
+  // (Я восстановил этот код, ты его случайно удалил)
   $('#composePhoto').addEventListener('change', (e) => {
      const file = e.target.files[0];
      if(file){
@@ -1596,7 +1624,7 @@ function setupComposeSocial(){
   });
 
   // публикация обычного поста
-  const btn = $('#publishSocialBtn');
+  const btn = $('#publishSocialBtn'); // Получаем кнопку один раз
   
   btn.onclick = async ()=>{
     const content   = $('#composeText').value.trim();
@@ -1622,8 +1650,7 @@ function setupComposeSocial(){
     state.posts.push(p);
     
     try {
-      // 2. ЖДЕМ ЗАВЕРШЕНИЯ
-      // ИЗМЕНЕНО: Генерация постов NPC теперь запускается внутри applyReactionsAndShowModal
+      // 2. ЖДЕМ ЗАВЕРШЕНИЯ (здесь может быть ошибка)
       await applyReactionsAndShowModal(p, false);
     } catch (e) {
       console.error("Ошибка при публикации (social):", e);
@@ -1640,11 +1667,11 @@ function setupComposeSocial(){
 
     save();
     renderFeed();
-    // ИЗМЕНЕНО: Удаляем вызов triggerNpcPostGeneration отсюда
-    // triggerNpcPostGeneration(p);
+    // Запускаем генерацию NPC-постов в "фоновом режиме"
+    triggerNpcPostGeneration(p);
     setActiveView('feed');
   };
-}
+} // <--- УБЕДИСЬ, ЧТО ЗДЕСЬ НЕТ ЛИШНЕЙ } СКОБКИ
 
 // === сюжетный пост ===
 
@@ -1653,7 +1680,8 @@ let storyIdeas = ['Нажми «Обновить идеи»'];
 let ideaIdx = 0;
                 
 function setupComposeStory() {
-  // --- Логика «Идей» ---
+  // --- Восстановленная логика «Идей» ---
+  // (Я не знаю, какие были идеи, добавил заглушки)
   storyIdeas = [
     "Сюжетная идея 1: Персонаж А находит...",
     "Сюжетная идея 2: Случайная встреча в...",
@@ -1679,8 +1707,8 @@ function setupComposeStory() {
   };
   // ---
                 
-  // --- Логика кнопки «Опубликовать» ---
-  const btn = $('#publishStoryBtn');
+  // --- Логика кнопки «Опубликовать» (из прошлого шага) ---
+  const btn = $('#publishStoryBtn'); // Получаем кнопку один раз
                 
   btn.onclick = async ()=>{
     const text = $('#storyText').value.trim();
@@ -1704,7 +1732,6 @@ function setupComposeStory() {
 
     try {
       // 2. ЖДЕМ ЗАВЕРШЕНИЯ
-      // ИЗМЕНЕНО: Генерация постов NPC теперь запускается внутри applyReactionsAndShowModal
       await applyReactionsAndShowModal(p, true);
     } catch (e) {
       console.error("Ошибка при публикации (story):", e);
@@ -1718,8 +1745,8 @@ function setupComposeStory() {
 
     save();
     renderFeed();
-    // ИЗМЕНЕНО: Удаляем вызов triggerNpcPostGeneration отсюда
-    // triggerNpcPostGeneration(p);
+    // Запускаем генерацию NPC-постов в "фоновом режиме"
+    triggerNpcPostGeneration(p);
     setActiveView('feed');
   };
 }
@@ -1912,134 +1939,74 @@ ${relationsSummary}
   return cleaned;
 }
 
+// (вставь это перед 'async function aiGenerateProfileThought(char)')
 
 // Генерация ПУБЛИЧНОГО поста (твита) от лица NPC
 async function aiGenerateNpcPost(char, player, playerPost) {
   const relationsSummary = buildRelationsSummary(char);
   const shortPlayerPost = clip(playerPost.content, 150);
-  
-  // КЛЮЧЕВОЙ МОМЕНТ:
-  // Мы берем "секретную мысль" персонажа, которую только что сгенерировали
-  const privateThought = char.lastThought; 
+  const privateThought = (char.lastThought || '').trim();
 
-  // ИЗМЕНЕНО: Добавлена проверка на всякий случай (хотя с новой логикой мысль всегда должна быть).
-  if (!privateThought) {
-      console.warn(`DEBUG: ${char.name} не имеет актуальной lastThought, хотя должен был. Пропускаем генерацию поста.`);
-      return null;
-  }
+  const maybeThought = privateThought 
+    ? `Твоя свежая внутренняя мысль по поводу этого поста:\n"""${privateThought}"""\n(Можешь опираться на неё, если она уместна.)\n`
+    : '';
 
   const prompt = `
-Ты — персонаж ${char.name} (${char.username}) из семейной саги.
-Твоя биография и канон:
+Ты — ${char.name} (${char.username}) из семейной саги.
+БИО:
 ${char.bio}
 
-Твои связи с другими:
+Связи:
 ${relationsSummary}
 
-Только что, игрок ${player.name} (${player.username}) опубликовал пост:
+Игрок ${player.name} (${player.username}) опубликовал:
 """${shortPlayerPost}"""
 
-Твоя НЕМЕДЛЕННАЯ, ПЕРВАЯ, СЕКРЕТНАЯ мысль об этом посте была:
-"""${privateThought}"""
-
-ЗАДАЧА:
-Основываясь на своей личности, каноне И этой своей секретной мысли, напиши короткий, публичный "твит" (пост в соцсеть) от своего имени.
-Это может быть прямая реакция на пост ${player.name} или просто мысль "по мотивам" ("Некоторые люди никогда не меняются...").
-
-ТРЕБОВАНИЯ:
-1.  **Это ПУБЛИЧНЫЙ пост.** Он должен быть в твоём стиле (${char.tone}).
-2.  **Формат:** Коротко (1-3 предложения), по-русски, от первого лица (от ${char.name}).
-3.  **НИКАКИХ** хэштегов, смайликов (если это не в стиле ${char.tone}), или обращений к "серверу" / "ИИ".
-4.  **ВАЖНО:** Если твоя "секретная мысль" ("${privateThought}") была нейтральной или скучной, или если тебе нечего сказать публично — просто верни ПУСТУЮ СТРОКУ.
-
-Ответь ТОЛЬКО текстом твита, или пустой строкой.
-`.trim();
+${maybeThought}
+Напиши короткий публичный пост от лица ${char.name} (1–3 предложения, по-русски, без хэштегов и отсылок к ИИ/серверу). 
+Пост должен соответствовать твоему тону (${char.tone}) и канону. 
+Ответь только текстом поста.
+  `.trim();
 
   const aiText = await askAI(prompt);
-  if (!aiText) return null; // Ошибка ИИ
+  if (!aiText) return null;
 
-  // Убираем лишние кавычки, которые ИИ любит добавлять
-  const cleaned = aiText.replace(/^"|"$/g, '').trim(); 
-
-  // Фильтруем "ответы-заглушки" от ИИ
-  const lower = cleaned.toLowerCase();
-  const badPhrases = [
-    'не могу', 'сервер', 'ошибка', 'я не знаю', 'как ии', 'как персонаж',
-    'твит:', 'пост:', 'я напишу:', 'хорошо, вот', 'пустая строка'
-  ];
-  
-  // Если ответ слишком короткий или содержит "плохие" фразы, считаем, что NPC решил промолчать
-  if (!cleaned || cleaned.length < 10 || badPhrases.some(p => lower.includes(p))) {
-    return null; 
-  }
+  const cleaned = aiText.replace(/^"|"$/g, '').trim();
+  const bad = ['сервер', 'как ии', 'я не могу', 'ошибка', 'пост:','твіт:','твит:','хорошо, вот'];
+  if (!cleaned || cleaned.length < 10 || bad.some(p=>cleaned.toLowerCase().includes(p))) return null;
 
   return cleaned;
 }
 
-// ИЗМЕНЕНО: Эта функция полностью переписана.
-// Эта функция запускает "вдогонку" генерацию постов от NPC
-// Теперь она принимает список ID персонажей, которые только что отреагировали.
-async function triggerNpcPostGeneration(playerPost, reactingCharacterIds) {
-
-  // Проверяем, есть ли вообще кто-то в списке
-  if (!reactingCharacterIds || reactingCharacterIds.length === 0) {
-    return;
-  }
-
-  // Находим объекты персонажей только из списка reactingCharacterIds
-  const charactersToReact = state.characters.filter(c => reactingCharacterIds.includes(c.id));
-  
+// Было: перебор вообще всех + случайности
+// Стало: 1–5 релевантных от aiPickReactors, по одному посту каждому
+async function triggerNpcPostGeneration(playerPost) {
+  const plan = await aiPickReactors(playerPost, 5);
+  const ids = plan?.length ? plan.map(r => r.id) : getHeuristicReactors(playerPost, 5);
   const player = state.players.find(p => p.id === playerPost.authorId);
   let newPostsGenerated = false;
 
-  console.log(`Запускаем генерацию NPC-постов. Участвуют: ${charactersToReact.map(c=>c.name).join(', ')}`);
+  for (const id of ids) {
+    const char = state.characters.find(c => c.id === id);
+    if (!char) continue;
 
-  // Перебираем только тех, кто отреагировал
-  for (const char of charactersToReact) {
-    // Определяем, сколько постов напишет персонаж (0, 1 или 2)
-    let postCount = 0;
-    const roll = Math.random();
-    
-    // Увеличиваем шанс поста, так как персонаж уже отреагировал приватно
-    if (roll > 0.90) {      // 10% шанс на 2 поста
-      postCount = 2;
-    } else if (roll > 0.3) { // 60% шанс на 1 пост (30% шанс молчать публично)
-      postCount = 1;
-    }
-
-    for (let i = 0; i < postCount; i++) {
-      // Просим ИИ сгенерировать текст твита (мы уверены, что lastThought актуальна)
-      const postContent = await aiGenerateNpcPost(char, player, playerPost);
-      
-      if (postContent) {
-        // Если ИИ вернул текст, создаем новый пост
-        const p = postObj({
-          type: 'social',
-          authorType: 'character',
-          authorId: char.id,
-          content: postContent,
-          relatedCharacters: [playerPost.authorId]
-        });
-        
-        state.posts.push(p);
-        newPostsGenerated = true;
-        
-        // ВАЖНО: Добавляем задержку, чтобы не перегружать API и симулировать "время набора"
-        // Ждем от 1.5 до 4 секунд
-        await new Promise(resolve => setTimeout(resolve, randint(1500, 4000)));
-      }
+    const postContent = await aiGenerateNpcPost(char, player, playerPost);
+    if (postContent) {
+      const p = postObj({
+        type: 'social',
+        authorType: 'character',
+        authorId: char.id,
+        content: postContent,
+        relatedCharacters: [playerPost.authorId]
+      });
+      state.posts.push(p);
+      newPostsGenerated = true;
     }
   }
 
-  // Если хотя бы один новый пост был создан...
   if (newPostsGenerated) {
-    console.log('NPC закончили постить, обновляем ленту.');
-    save(); // Сохраняем все новые посты
-    
-    // Перерисовываем ленту, только если пользователь сейчас на ней
-    if ($('#view-feed').classList.contains('active')) {
-      renderFeed();
-    }
+    save();
+    if ($('#view-feed').classList.contains('active')) renderFeed();
   }
 }
 
@@ -2066,17 +2033,9 @@ async function applyReactionsAndShowModal(post, isStory){
   // 2. ЖДЕМ, ПОКА ИИ "ДУМАЕТ"
   const rxList = await computeReactions(post, isStory);
   
-  // <<< ИЗМЕНЕНО: Запускаем генерацию NPC-постов >>>
-  // Мы передаем список ID персонажей, которые только что отреагировали (и обновили lastThought).
-  const reactingCharacterIds = rxList.map(rx => rx.charId);
-  // Запускаем это в "фоновом режиме" (без await), чтобы модалка показалась быстрее, а посты появлялись постепенно.
-  triggerNpcPostGeneration(post, reactingCharacterIds); 
-  // <<< КОНЕЦ ИЗМЕНЕНИЯ >>>
-
   // 3. ТЕПЕРЬ ЗАМЕНЯЕМ "ТОЧКИ" НА РЕЗУЛЬТАТ
   if(!rxList.length){
-    // Добавлено напоминание проверить консоль, если реакций нет
-    wrap.innerHTML = `<p>Никто из ключевых персонажей не отреагировал. (Проверь консоль на наличие ошибок API ❌)</p>`;
+    wrap.innerHTML = `<p>Никто из ключевых персонажей не отреагировал.</p>`;
   }else{
     wrap.innerHTML = rxList.slice(0,5).map(rx=>{
       const c = state.characters.find(k=>k.id===rx.charId);
@@ -2152,7 +2111,6 @@ async function computeReactions(post, isStory) {
     // 4. Обновляем отношение и сохраняем реакцию
     const newAppr = clamp(currentAppr + delta, 0, 100);
     c.approval[state.activePlayerId] = newAppr;
-    // ВАЖНО: именно здесь обновляется lastThought, который потом используется для генерации постов
     c.lastThought = text;
 
     const rx = reactionObj(post.id, c.id, text, delta);
@@ -2162,7 +2120,7 @@ async function computeReactions(post, isStory) {
 
   save();
   renderRelations();
-  return out; // Возвращаем список реакций
+  return out;
 }
 
 function openReactionsForPost(postId){
@@ -2244,7 +2202,7 @@ function generateThought(char, post, delta){
 // === утилиты ===
 
 function getRelevantCharacters(post) {
-  // Эта функция больше не используется в triggerNpcPostGeneration, но оставим её на всякий случай.
+  // Теперь она возвращает всех, КРОМЕ автора поста.
   // (post.authorId будет 'player1' или 'player2' для игроков)
   return state.characters.filter(c => c.id !== post.authorId);
 }
