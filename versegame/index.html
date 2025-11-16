@@ -1381,9 +1381,6 @@ function setupComposeSocial(){
   renderFeed();
   setActiveView('feed');
 };
-$('#publishSocialBtn').onclick = async ()=>{
-  const content   = $('#composeText').value.trim();
-  const photoData = $('#composePhotoPreview img')?.getAttribute('src') || null;
 
   if(!content){
     alert('Напиши текст поста');
@@ -1536,13 +1533,38 @@ function setupDm(){
 // === реакции ===
 let lastReactionPostId = null;
 
+// обёртка: применяем реакции + показываем модалку
+async function applyReactionsAndShowModal(post, isStory){
+  const rxList = await computeReactions(post, isStory);
+  lastReactionPostId = post.id;
+
+  const wrap = $('#modalReactions');
+  if (!rxList.length){
+    wrap.innerHTML = `<p>Никто из ключевых персонажей не отреагировал.</p>`;
+  } else {
+    wrap.innerHTML = rxList.slice(0,5).map(rx=>{
+      const c = state.characters.find(k=>k.id===rx.charId);
+      const d = rx.delta > 0
+        ? `<span class="delta pos">+${rx.delta}%</span>`
+        : `<span class="delta neg">${rx.delta}%</span>`;
+      return `<div class="react-item">
+        <div><strong>${c?.name||'?'}</strong>: ${rx.text}</div>
+        <div class="delta">${d}</div>
+      </div>`;
+    }).join('');
+  }
+
+  $('#reactionModal').classList.remove('hidden');
+}
+
+// основная логика вычисления реакций с ИИ
 async function computeReactions(post, isStory){
   // Сначала даём ИИ выбрать, кто вообще реагирует
   const aiIds = await aiPickReactingCharacters(post);
   let relevant;
   if (aiIds && aiIds.length){
     relevant = aiIds.map(id => state.characters.find(c=>c.id===id)).filter(Boolean);
-  }else{
+  } else {
     // если ИИ не выбрал никого — fallback на старую логику
     relevant = getRelevantCharacters(post);
   }
@@ -1562,11 +1584,11 @@ async function computeReactions(post, isStory){
     // 1-й слой: текст реакции на пост
     let text = await aiGenerateReactionText(c, post, delta, before, after, isStory);
     if (!text){
-      text = generateThought(c, post, delta); // старый генератор как запасной
+      text = generateThought(c, post, delta); // запасной рандомный текст
     }
     c.lastThought = text;
 
-    // 3-й слой: возможно обновляем «название отношений»
+    // 3-й слой: поэтичное название отношений
     if (Math.abs(delta) >= 3 || after <= 30 || after >= 70){
       const title = await aiGenerateRelationTitle(c, after);
       if (title){
@@ -1580,31 +1602,6 @@ async function computeReactions(post, isStory){
     out.push(rx);
   }
 
-  save();
-  renderRelations();
-  return out;
-}
-
-
-
-function computeReactions(post, isStory){
-  const relevant = getRelevantCharacters(post);
-  const out = [];
-  relevant.forEach(c=>{
-    const appr = (c.approval[state.activePlayerId] ?? 50);
-    const bias = (appr - 50) / 10;
-    const base = isStory ? 4 : 2;
-    let delta = Math.round(base + (Math.random()*4-2) + bias);
-    delta = clamp(delta, isStory ? -8 : -5, isStory ? 8 : 5);
-
-    const text = generateThought(c, post, delta);
-    c.approval[state.activePlayerId] = clamp((c.approval[state.activePlayerId] ?? 50) + delta, 0, 100);
-    c.lastThought = text;
-
-    const rx = reactionObj(post.id, c.id, text, delta);
-    state.reactions.push(rx);
-    out.push(rx);
-  });
   save();
   renderRelations();
   return out;
