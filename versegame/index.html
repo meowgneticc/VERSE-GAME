@@ -1195,6 +1195,16 @@ function setupDm(){
       await aiReplyToDm(charId);
     }
   };
+} // ← вот этой скобки и не хватало
+
+// эту функцию можно вообще удалить, если она больше не нужна,
+// но если хочешь оставить — пусть будет отдельной
+function botReplyLater(charId, playerText){
+  const char = state.characters.find(c=>c.id===charId);
+  const reply = generateBotReply(char, playerText);
+  setTimeout(()=>{ pushMessage(charId, charId, reply); }, randint(1200, 2400));
+}
+
 
  
 
