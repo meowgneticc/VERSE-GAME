@@ -1341,46 +1341,52 @@ function renderRelations(){
 
 // === создание обычного поста ===
 function setupComposeSocial(){
+  // превью фотки
   $('#composePhoto').addEventListener('change', (e)=>{
     const file = e.target.files?.[0];
     if(!file){
-      $('#composePhotoPreview').innerHTML='';
+      $('#composePhotoPreview').innerHTML = '';
       return;
     }
     const reader = new FileReader();
-    reader.onload = ()=> $('#composePhotoPreview').innerHTML = `<img src="${reader.result}" alt="preview">`;
+    reader.onload = () => {
+      $('#composePhotoPreview').innerHTML = `<img src="${reader.result}" alt="preview">`;
+    };
     reader.readAsDataURL(file);
   });
 
+  // публикация обычного поста
   $('#publishSocialBtn').onclick = async ()=>{
-  const content   = $('#composeText').value.trim();
-  const photoData = $('#composePhotoPreview img')?.getAttribute('src') || null;
+    const content   = $('#composeText').value.trim();
+    const photoData = $('#composePhotoPreview img')?.getAttribute('src') || null;
 
-  if(!content){
-    alert('Напиши текст поста');
-    return;
-  }
+    if (!content){
+      alert('Напиши текст поста');
+      return;
+    }
 
-  const p = postObj({
-    type:'social',
-    authorType:'player',
-    authorId:state.activePlayerId,
-    content,
-    relatedCharacters: [],
-    photoData
-  });
+    const p = postObj({
+      type:'social',
+      authorType:'player',
+      authorId: state.activePlayerId,
+      content,
+      relatedCharacters: [],
+      photoData
+    });
 
-  state.posts.push(p);
-  await applyReactionsAndShowModal(p, false);
+    state.posts.push(p);
+    await applyReactionsAndShowModal(p, false);
 
-  $('#composeText').value = '';
-  $('#composePhoto').value = '';
-  $('#composePhotoPreview').innerHTML = '';
+    // очистка формы
+    $('#composeText').value = '';
+    $('#composePhoto').value = '';
+    $('#composePhotoPreview').innerHTML = '';
 
-  save();
-  renderFeed();
-  setActiveView('feed');
-};
+    save();
+    renderFeed();
+    setActiveView('feed');
+  };
+}
 
   if(!content){
     alert('Напиши текст поста');
