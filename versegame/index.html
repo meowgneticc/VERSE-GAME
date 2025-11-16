@@ -540,6 +540,82 @@
       align-items:center;
       margin-bottom:.5rem;
     }
+    /* ... (твой существующий CSS) ... */
+
+    /* Эффект нажатия на кнопки (как ты просил) */
+    button:active, .tab:active {
+      transform: scale(0.97);
+      opacity: 0.9;
+      transition: transform 50ms ease, opacity 50ms ease;
+    }
+
+    /* Состояние загрузки для кнопок (спиннер) */
+    button.loading {
+      position: relative;
+      /* Скрываем оригинальный текст, пока грузится */
+      color: transparent !important; 
+      /* Блокируем повторные нажатия */
+      pointer-events: none; 
+    }
+    button.loading::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: 20px; /* Размер спиннера */
+      height: 20px;
+      border-radius: 50%;
+      /* Спиннер будет белым, т.к. кнопки .primary у нас темные */
+      border: 3px solid rgba(255,255,255,0.3); 
+      border-top-color: #fff;
+      /* Анимация вращения */
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: translate(-50%, -50%) rotate(360deg); }
+    }
+
+    /* Анимация "трех точек" для модального окна */
+    .loader-dots {
+      text-align: center;
+      font-size: 1.5rem;
+      padding: 1rem 0;
+      color: var(--muted);
+    }
+    .loader-dots::after {
+      content: '.';
+      animation: dots 1.4s steps(5, end) infinite;
+    }
+    
+    @keyframes dots {
+      0%, 20% {
+        color: rgba(0,0,0,0);
+        text-shadow:
+          .25em 0 0 rgba(0,0,0,0),
+          .5em 0 0 rgba(0,0,0,0);
+      }
+      40% {
+        color: var(--muted);
+        text-shadow:
+          .25em 0 0 rgba(0,0,0,0),
+          .5em 0 0 rgba(0,0,0,0);
+      }
+      60% {
+        text-shadow:
+          .25em 0 0 var(--muted),
+          .5em 0 0 rgba(0,0,0,0);
+      }
+      80%, 100% {
+        text-shadow:
+          .25em 0 0 var(--muted),
+          .5em 0 0 var(--muted);
+      }
+    }
+
+  </style>
+</head>
   </style>
 </head>
 <body>
@@ -1342,105 +1418,99 @@ function renderRelations(){
 }
 
 // === создание обычного поста ===
-function setupComposeSocial(){
-  // превью фотки
-  $('#composePhoto').addEventListener('change', (e)=>{
-    const file = e.target.files?.[0];
-    if(!file){
+  function setupComposeSocial(){
+    // ... (код для превью фото остается без изменений) ...
+
+    // публикация обычного поста
+    const btn = $('#publishSocialBtn'); // Получаем кнопку один раз
+    
+    btn.onclick = async ()=>{
+      const content   = $('#composeText').value.trim();
+      const photoData = $('#composePhotoPreview img')?.getAttribute('src') || null;
+
+      if (!content){
+        alert('Напиши текст поста');
+        return;
+      }
+
+      // 1. ПОКАЗЫВАЕМ ЗАГРУЗКУ
+      btn.classList.add('loading');
+
+      const p = postObj({
+        type:'social',
+        authorType:'player',
+        authorId: state.activePlayerId,
+        content,
+        relatedCharacters: [],
+        photoData
+      });
+
+      state.posts.push(p);
+      
+      try {
+        // 2. ЖДЕМ ЗАВЕРШЕНИЯ (здесь может быть ошибка)
+        await applyReactionsAndShowModal(p, false);
+      } catch (e) {
+        console.error("Ошибка при публикации (social):", e);
+        alert("Произошла ошибка при публикации. Попробуйте снова.");
+      } finally {
+        // 3. УБИРАЕМ ЗАГРУЗКУ (в любом случае)
+        btn.classList.remove('loading');
+      }
+
+      // очистка формы
+      $('#composeText').value = '';
+      $('#composePhoto').value = '';
       $('#composePhotoPreview').innerHTML = '';
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      $('#composePhotoPreview').innerHTML = `<img src="${reader.result}" alt="preview">`;
+
+      save();
+      renderFeed();
+      setActiveView('feed');
     };
-    reader.readAsDataURL(file);
-  });
+  }
 
-  // публикация обычного поста
-  $('#publishSocialBtn').onclick = async ()=>{
-    const content   = $('#composeText').value.trim();
-    const photoData = $('#composePhotoPreview img')?.getAttribute('src') || null;
+// === сюжетный пост ===
+  // ... (код для идей остается без изменений) ...
 
-    if (!content){
-      alert('Напиши текст поста');
+  const btn = $('#publishStoryBtn'); // Получаем кнопку один раз
+
+  btn.onclick = async ()=>{
+    const text = $('#storyText').value.trim();
+    if(!text){
+      alert('Напиши сюжетный текст или вставь идею');
       return;
     }
+  
+    // 1. ПОКАЗЫВАЕМ ЗАГРУЗКУ
+    btn.classList.add('loading');
 
     const p = postObj({
-      type:'social',
+      type:'story',
       authorType:'player',
-      authorId: state.activePlayerId,
-      content,
-      relatedCharacters: [],
-      photoData
+      authorId:state.activePlayerId,
+      content: text,
+      relatedCharacters: []
     });
 
     state.posts.push(p);
-    await applyReactionsAndShowModal(p, false);
 
-    // очистка формы
-    $('#composeText').value = '';
-    $('#composePhoto').value = '';
-    $('#composePhotoPreview').innerHTML = '';
+    try {
+      // 2. ЖДЕМ ЗАВЕРШЕНИЯ
+      await applyReactionsAndShowModal(p, true);
+    } catch (e) {
+      console.error("Ошибка при публикации (story):", e);
+      alert("Произошла ошибка при публикации. Попробуйте снова.");
+    } finally {
+      // 3. УБИРАЕМ ЗАГРУЗКУ
+      btn.classList.remove('loading');
+    }
+
+    $('#storyText').value = '';
 
     save();
     renderFeed();
     setActiveView('feed');
   };
-
-}
-
-// === сюжетный пост ===
-let storyIdeas = [];
-let ideaIdx = 0;
-
-function setupComposeStory(){
-  const refresh = ()=>{
-    storyIdeas = generateStoryIdeas();
-    ideaIdx = 0;
-    paintIdea();
-  };
-
-  $('#ideaRefresh').onclick = refresh;
-  $('#ideaPrev').onclick = ()=>{
-    if(!storyIdeas.length) return;
-    ideaIdx = (ideaIdx - 1 + storyIdeas.length) % storyIdeas.length;
-    paintIdea();
-  };
-  $('#ideaNext').onclick = ()=>{
-    if(!storyIdeas.length) return;
-    ideaIdx = (ideaIdx + 1) % storyIdeas.length;
-    paintIdea();
-  };
-  $('#ideaUse').onclick = ()=>{
-    if(storyIdeas.length) $('#storyText').value = storyIdeas[ideaIdx];
-  };
-
- $('#publishStoryBtn').onclick = async ()=>{
-  const text = $('#storyText').value.trim();
-  if(!text){
-    alert('Напиши сюжетный текст или вставь идею');
-    return;
-  }
-
-  const p = postObj({
-    type:'story',
-    authorType:'player',
-    authorId:state.activePlayerId,
-    content: text,
-    relatedCharacters: []
-  });
-
-  state.posts.push(p);
-  await applyReactionsAndShowModal(p, true);
-
-  $('#storyText').value = '';
-
-  save();
-  renderFeed();
-  setActiveView('feed');
-};
 }
 
 function paintIdea(){
@@ -1655,10 +1725,17 @@ function formatDelta(delta){
 
 // применяем реакции и открываем модалку
 async function applyReactionsAndShowModal(post, isStory){
-  const rxList = await computeReactions(post, isStory);
   lastReactionPostId = post.id;
-
   const wrap = $('#modalReactions');
+
+  // 1. СРАЗУ ПОКАЗЫВАЕМ МОДАЛКУ С "ТРЕМЯ ТОЧКАМИ"
+  wrap.innerHTML = '<div class="loader-dots"></div>';
+  $('#reactionModal').classList.remove('hidden');
+
+  // 2. ЖДЕМ, ПОКА ИИ "ДУМАЕТ"
+  const rxList = await computeReactions(post, isStory);
+  
+  // 3. ТЕПЕРЬ ЗАМЕНЯЕМ "ТОЧКИ" НА РЕЗУЛЬТАТ
   if(!rxList.length){
     wrap.innerHTML = `<p>Никто из ключевых персонажей не отреагировал.</p>`;
   }else{
@@ -1671,7 +1748,7 @@ async function applyReactionsAndShowModal(post, isStory){
       </div>`;
     }).join('');
   }
-  $('#reactionModal').classList.remove('hidden');
+  // (модалка уже и так была показана)
 }
 
 // считаем реакции и меняем отношения
@@ -1816,6 +1893,19 @@ function authorName(p){
 }
 
 function currentPlayer(){ return state.players.find(p=>p.id===state.activePlayerId); }
+
+// === утилиты ===
+
+// (вот эту функцию нужно добавить)
+function getRelevantCharacters(post) {
+  // Временная реализация: просто возвращаем всех персонажей.
+  // Позже здесь можно будет сделать сложную логику
+  // (например, только тех, кто упомянут, или кто сейчас "в игре")
+  return state.characters;
+}
+
+function authorName(p){
+// ... (остальной код утилит) ...
 
 function setupFilters(){
   const chips = $$('.filters .chip');
