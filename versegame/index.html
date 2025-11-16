@@ -574,8 +574,6 @@
     }
 
     @keyframes spin {
-      /* Исправлено: transform должен содержать и translate, и rotate для корректной анимации */
-      from { transform: translate(-50%, -50%) rotate(0deg); }
       to { transform: translate(-50%, -50%) rotate(360deg); }
     }
 
@@ -620,7 +618,8 @@
 </head>
 <body>
   <div id="app">
-    <header class="topbar">
+    <!-- Top bar -->
+<header class="topbar">
       <div class="brand">Verse</div>
       <div class="player-switch">
         <button id="myProfileBtn" class="secondary" style="padding:.25rem .7rem; margin-right:.5rem;">
@@ -633,7 +632,9 @@
       </div>
     </header>
 
+    <!-- Views -->
     <main>
+      <!-- FEED (Экран 1) -->
       <section id="view-feed" class="view active">
         <div class="view-head">
           <h1>Лента</h1>
@@ -646,6 +647,7 @@
         <ul id="feedList" class="feed-list"></ul>
       </section>
 
+      <!-- RELATIONS (Экран 2) -->
       <section id="view-relations" class="view">
         <div class="view-head">
           <h1>Отношения</h1>
@@ -653,6 +655,7 @@
         <div id="relationsList" class="relations"></div>
       </section>
 
+      <!-- CHARACTER PROFILE (Экран 2.5) -->
       <section id="view-character" class="view">
         <div class="view-head">
           <h1>Профиль персонажа</h1>
@@ -660,6 +663,7 @@
         <div id="characterView" class="char-view"></div>
       </section>
 
+      <!-- COMPOSE SOCIAL (Экран 3) -->
       <section id="view-compose" class="view">
         <div class="view-head">
           <h1>Создать пост</h1>
@@ -679,6 +683,7 @@
         </div>
       </section>
 
+      <!-- COMPOSE STORY (Экран 4) -->
       <section id="view-story" class="view">
         <div class="view-head">
           <h1>Сюжетный пост</h1>
@@ -704,6 +709,7 @@
         </div>
       </section>
 
+      <!-- DIRECT MESSAGES (Экран 5) -->
       <section id="view-dm" class="view">
         <div class="view-head">
           <h1 id="dmTitle">ЛС</h1>
@@ -726,6 +732,7 @@
         </div>
       </section>
 
+      <!-- REACTIONS HISTORY (Экран 6) -->
       <section id="view-reactions" class="view">
         <div class="view-head">
           <h1>Реакции персонажей</h1>
@@ -734,6 +741,7 @@
       </section>
     </main>
 
+    <!-- Tabbar -->
     <nav class="tabbar">
       <button class="tab active" data-target="feed" title="Лента">Лента</button>
       <button class="tab" data-target="relations" title="Отношения">Отношения</button>
@@ -744,6 +752,7 @@
     </nav>
   </div>
 
+  <!-- Modal: reactions after publish -->
   <div id="reactionModal" class="modal hidden">
     <div class="modal-card">
       <div class="modal-head">
@@ -771,7 +780,7 @@ const clamp=(x,min,max)=>Math.max(min,Math.min(max,x));
 
 // Собираем краткое описание связей персонажа с другими
 function buildRelationsSummary(char) {
-  if (!char || !char.relations) return 'Нет явных связей.';
+  if (!char.relations) return 'Нет явных связей.';
 
   const lines = [];
 
@@ -791,7 +800,6 @@ function buildRelationsSummary(char) {
 
 // === ИИ (Gemini) для ЛС ===
 async function askAI(promptText) {
-  console.log("Попытка запроса к AI...");
   try {
     const res = await fetch('/api/gemini', {
       method: 'POST',
@@ -809,9 +817,111 @@ async function askAI(promptText) {
 
     return data.answer.trim();
   } catch (err) {
-    console.error('AI network error (API /api/gemini недоступен локально?)', err);
+    console.error('AI network error', err);
     return null;                // <— и тут тоже null
   }
+}
+
+// === ВЫБОР, КТО БУДЕТ РЕАГИРОВАТЬ (1–5 персонажей) ===
+
+// Делаем удобный список персонажей для ИИ
+function castForAI() {
+  return state.characters
+    .filter(c => c.id !== state.activePlayerId) // не берём текущего игрока
+    .map(c => ({
+      id: c.id,
+      name: c.name,
+      username: c.username,
+      tone: c.tone,
+      approval: c.approval?.[state.activePlayerId] ?? 50,
+      relations: c.relations || {}
+    }));
+}
+
+// Аккуратно достаём JSON из ответа ИИ
+function parseJsonFromAi(s) {
+  try {
+    const cleaned = s.trim().replace(/```json|```/g, '');
+    return JSON.parse(cleaned);
+  } catch {
+    return null;
+  }
+}
+
+// Просим ИИ: выбери 1–5 персонажей и (по желанию) дельту реакции
+async function aiPickReactors(post, limit = 5) {
+  const me = currentPlayer();
+  const cast = castForAI();
+
+  const prompt = `
+Ты выбираешь, кто из персонажей должен отреагировать на пост игрока.
+Дай от 1 до ${limit} человек. Учитывай:
+- связаны ли они с темой поста,
+- их связи/аппрувал к игроку,
+- массив post.relatedCharacters (те, кого явно затронули).
+
+Верни ТОЛЬКО JSON без пояснений:
+{"reactors":[{"id":"<charId>","why":"краткая причина","delta":-1.25}]}
+
+delta: число от -5 до 5 с шагом 0.25 (знак — тон реакции).
+
+Входные данные:
+Игрок: ${me.name} (${me.username})
+Пост: """${clip(post.content, 600)}"""
+post.relatedCharacters: [${(post.relatedCharacters || []).join(', ')}]
+Персонажи: ${JSON.stringify(cast)}
+`.trim();
+
+  const answer = await askAI(prompt);
+  const data = answer && parseJsonFromAi(answer);
+  if (!data || !Array.isArray(data.reactors)) return null;
+
+  const seen = new Set();
+
+  return data.reactors
+    .filter(r =>
+      r &&
+      typeof r.id === 'string' &&
+      !seen.has(r.id) &&
+      state.characters.some(x => x.id === r.id)
+    )
+    .slice(0, limit)
+    .map(r => {
+      seen.add(r.id);
+      return {
+        id: r.id,
+        why: r.why || '',
+        delta:
+          typeof r.delta === 'number'
+            ? clamp(Math.round(r.delta * 4) / 4, -5, 5)
+            : null
+      };
+    });
+}
+
+// Запасной вариант, если ИИ сломался и не выбрал никого
+function getHeuristicReactors(post, limit = 5) {
+  const idsFromPost = (post.relatedCharacters || [])
+    .filter(id => state.characters.some(c => c.id === id));
+
+  const others = state.characters
+    .filter(
+      c =>
+        c.id !== post.authorId &&
+        c.id !== state.activePlayerId &&
+        !idsFromPost.includes(c.id)
+    )
+    .sort((a, b) =>
+      Math.abs((b.approval[state.activePlayerId] ?? 50) - 50) -
+      Math.abs((a.approval[state.activePlayerId] ?? 50) - 50)
+    );
+
+  const orderedIds = [
+    ...idsFromPost,
+    ...others.map(c => c.id)
+  ];
+
+  return orderedIds.slice(0, limit);
 }
 
 
@@ -874,23 +984,8 @@ let state = {
   characters: [],
   posts: [],
   dms: {},
-  reactions: [],
-  npcs: [],        // жители (обычные пользователи ленты)
-  outlets: [],     // медиа
-  world: {         // интересы мира
-    topics: ['horses','music','university','nightlife','family','gossip','sports','tech','citylife']
-  }
+  reactions: []
 };
-
-// ВНЕ state (отдельно!)
-function migrateStateSchema(){
-  if(!state.npcs)       state.npcs = [];
-  if(!state.outlets)    state.outlets = [];
-  if(!state.world)      state.world = { topics:['horses','music','university','nightlife','family','gossip','sports','tech','citylife'] };
-  if(!state.dms)        state.dms = {};
-  if(!state.reactions)  state.reactions = [];
-}
-
 
 const LS_KEY = 'verse_state_v2_grayson_loran';
 
@@ -1139,93 +1234,14 @@ function seedIfEmpty(){
 function save(){
   try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }catch(e){}
 }
-
 function load(){
   try{
     const raw = localStorage.getItem(LS_KEY);
     if(raw) state = JSON.parse(raw);
   }catch(e){}
-
-  // приводим схему к актуальной
-  migrateStateSchema();
-
-  // создаём персонажей/стартовые посты, если пусто
   seedIfEmpty();
-
-  function seedWorldAccounts(){
-  if (state.npcs.length || state.outlets.length) return;
-
-  const tones = ['warm','stoic','sharp','chaotic'];
-  const topics = state.world.topics;
-
-  const handleBits = {
-    horses: ['horseslover','hoofbeats','stableaddict','ride4life','cavalier','coltwatch'],
-    music:  ['ashfan','riffhunter','vinylcity','gigguide','ampjunkie'],
-    family: ['familyfirst','blademorewatch','homevibes','parenttalk'],
-    gossip: ['CityRumors','TeaSpill','SpiceWire','WhisperLane','DailyDust'],
-    nightlife:['afterdark','clubtrail','midnightowl','citylights'],
-    university:['campusbee','studyflow','libratalk'],
-    sports:  ['varsitywatch','balltalk','arenaecho'],
-    tech:    ['techpulse','devglance','codetips'],
-    citylife:['urbansight','streetnotes','townsquare']
-  };
-
-  function makeHandle(topic){
-    const pool = handleBits[topic] || ['feedline','localvoice','randomuser'];
-    const base = choice(pool);
-    const suffix = Math.random()<0.5 ? '' : Math.floor(10+Math.random()*89);
-    return '@' + (base + suffix);
-  }
-
-  function makeName(){
-    const first = ['Саша','Кира','Макс','Аня','Денис','Лия','Игорь','Ника','Ян','Мила','Тимур','Рита','Федя','Юля','Гоша'];
-    const last  = ['Ильин','Савина','Туманова','Лебедев','Громова','Волков','Мельник','Котова','Руднев','Смирнова','Назаров'];
-    return `${choice(first)} ${choice(last)}`;
-  }
-
-  // 28–36 обычных NPC
-  const npcCount = randint(28,36);
-  for (let i=0;i<npcCount;i++){
-    const t = choice(topics);
-    state.npcs.push({
-      id: uid('npc'),
-      name: '',
-      username: makeHandle(t),
-      tone: choice(tones),
-      topic: t,
-      bio: `Обычный житель города, интересуется: ${t}.`
-    });
-  }
-
-  // СМИ: новости + таблоиды
-  const outlets = [
-    { name:'Город Сегодня',   topic:'citylife', type:'news'   },
-    { name:'Кантер-Таун News',topic:'citylife', type:'news'   },
-    { name:'Светская Лупа',   topic:'gossip',   type:'tabloid'},
-    { name:'Daily Dust',      topic:'gossip',   type:'tabloid'}
-  ];
-
-  state.outlets = outlets.map(o=>({
-    id: uid('outlet'),
-    name: o.name,
-    username: makeHandle(o.topic),
-    tone: o.type==='news' ? 'stoic' : 'sharp',
-    outletType: o.type,
-    topic: o.topic,
-    bio: o.type==='news'
-      ? 'Местные новости, коротко и по делу.'
-      : 'Громкие заголовки, слухи и сплетни.'
-  }));
-}
-
-
-  // создаём NPC и медиа, если их ещё нет
-  seedWorldAccounts();
-
   save();
 }
-
-
 
 // === модели постов / реакций ===
 function postObj({type, authorType, authorId, content, relatedCharacters=[], photoData=null}){
@@ -1280,38 +1296,14 @@ function renderFeed(){
   });
 }
 
-
-function getAuthorByType(authorType, id){
-  if (authorType==='player')    return state.players.find(x=>x.id===id);
-  if (authorType==='character') return state.characters.find(x=>x.id===id);
-  if (authorType==='npc')       return state.npcs.find(x=>x.id===id);
-  if (authorType==='outlet')    return state.outlets.find(x=>x.id===id);
-  return null;
-}
-
-// Добавим функцию, которая не была определена в оригинальном коде
-function openReactionsForPost(postId) {
-    lastReactionPostId = postId; // Устанавливаем фильтр по ID поста
-    setActiveView('reactions'); // Переходим на вкладку реакций
-}
-
 function renderPostHtml(p){
-  const author = getAuthorByType(p.authorType, p.authorId);
-  const rawName = author?.name ?? 'Неизвестно';
-  const rawUsername = author?.username ?? '@user';
+  const author = p.authorType==='player'
+    ? state.players.find(pl=>pl.id===p.authorId)
+    : state.characters.find(c=>c.id===p.authorId);
 
-  const isMedia = p.authorType==='outlet';
-  const isNpc   = p.authorType==='npc';
-
-  // у жителей показываем только @ник
-  const name = isNpc ? rawUsername : rawName;
-  const username = isNpc ? '' : rawUsername;
-
-  const badge = p.type==='story' ? `<span class="badge">Сюжет</span>`
-              : isMedia           ? `<span class="badge">Медиа</span>`
-              : isNpc             ? `<span class="badge">Житель</span>`
-              : '';
-
+  const name = author?.name ?? 'Неизвестно';
+  const username = author?.username ?? '@user';
+  const badge = p.type==='story' ? `<span class="badge">Сюжет</span>` : '';
   const photo = p.photoData ? `<div class="photo-preview"><img src="${p.photoData}" alt=""></div>` : '';
 
   const commentsRow = (p.type==='social')
@@ -1332,7 +1324,7 @@ function renderPostHtml(p){
         <div class="avatar" aria-hidden="true"></div>
         <div class="meta">
           <div class="name">${name} ${badge}</div>
-          ${username ? `<div class="username">${username}</div>` : ''}
+          <div class="username">${username}</div>
         </div>
       </div>
       <div class="post-content">${p.type==='story'
@@ -1344,8 +1336,6 @@ function renderPostHtml(p){
     </li>
   `;
 }
-
-
 
 function addQuickComment(postId){
   const p = state.posts.find(p=>p.id===postId);
@@ -1379,47 +1369,17 @@ function openCharacterProfile(charId){
   updateProfileThoughtWithAI(charId);
 }
 
-async function aiGenerateRelationTitle(char, player, approvalNow, lastDelta){
-  const prompt = `
-Ты придумываешь ёмкие, дерзкие названия отношений между двумя вымышленными персонажами.
-Дай ОДНУ фразу (3–7 слов) по-русски, без кавычек, без точек в конце.
-
-Контекст:
-- Персонаж A: ${char.name}
-- Персонаж B: ${player.name}
-- Текущее сближение (0–100): ${Math.round(approvalNow)}
-- Последняя динамика (дельта): ${lastDelta > 0 ? '+'+lastDelta : lastDelta}
-
-Примеры стиля:
-- бывшие возлюбленные с шансом на воссоединение
-- лучшие друзья до конца жизни
-- сексуальные партнёры с надеждой на большее
-- союзники по необходимости, но не по сердцу
-
-Верни только сам заголовок.`;
-  const txt = await askAI(prompt);
-  const cleaned = (txt||'').replace(/[«»"]/g,'').trim();
-  if (!cleaned) {
-    // запасной вариант — по шкале
-    return relationLabelFromValue(approvalNow);
-  }
-  return cleaned;
-}
-
 async function updateProfileThoughtWithAI(charId){
   const c = state.characters.find(x=>x.id===charId);
   if (!c) return;
   const key = state.activePlayerId;
 
-  // Убедимся, что свойство существует
-  if (!c.profileThought) c.profileThought = {};
-
   // если мысль уже есть — не трогаем
-  if (c.profileThought[key]) return;
+  if (c.profileThought && c.profileThought[key]) return;
 
   const text = await aiGenerateProfileThought(c);
   if (!text) return;
-  
+  if (!c.profileThought) c.profileThought = {};
   c.profileThought[key] = text;
   save();
 
@@ -1431,26 +1391,23 @@ async function updateProfileThoughtWithAI(charId){
 function renderCharacterProfile(){
   if (!currentProfileCharId) return;
   const me = currentPlayer();
-  
-  // Ищем персонажа и в characters, и в players (так как игроки тоже имеют профили)
-  let c = state.characters.find(x=>x.id===currentProfileCharId);
-  if (!c) c = state.players.find(x=>x.id===currentProfileCharId);
-
+  const c = state.characters.find(x=>x.id===currentProfileCharId);
   if (!c) return;
   const box = $('#characterView');
-
-  // Убедимся, что у объекта есть нужные поля, даже если это игрок без полного профиля
-  if (!c.approval) c.approval = {};
-  if (!c.profileThought) c.profileThought = {};
-  if (!c.relationTitles) c.relationTitles = {};
 
   const appr = (c.approval?.[state.activePlayerId] ?? 50);
 
   // 3-й слой: название отношений
-  const relTitle = c.relationTitles[state.activePlayerId] || relationLabelFromValue(appr);
+  const relTitle =
+    (c.relationTitles && c.relationTitles[state.activePlayerId])
+      ? c.relationTitles[state.activePlayerId]
+      : relationLabelFromValue(appr);
 
   // 2-й слой: мысль персонажа о игроке
-  const profileThought = c.profileThought[state.activePlayerId] || '';
+  const profileThought =
+    (c.profileThought && c.profileThought[state.activePlayerId])
+      ? c.profileThought[state.activePlayerId]
+      : '';
 
   const username = c.username || '@username';
   const bio = c.bio || 'Описание персонажа пока не заполнено.';
@@ -1534,9 +1491,6 @@ function renderCharacterProfile(){
   // файл для аватара
   const avatarInput = document.getElementById('charAvatarInput');
   if (avatarInput) {
-    // Важно: чтобы избежать дублирования обработчиков, лучше использовать назначение через onclick/onchange,
-    // или убедиться, что addEventListener вызывается только один раз.
-    // В данном контексте, так как мы перерисовываем весь HTML, старые обработчики теряются, так что это безопасно.
     avatarInput.addEventListener('change', handleAvatarFile);
   }
 }
@@ -1544,10 +1498,7 @@ function renderCharacterProfile(){
 
 function saveCharacterBio(){
   if (!currentProfileCharId) return;
-  // Ищем и в characters, и в players
-  let c = state.characters.find(x=>x.id===currentProfileCharId);
-  if (!c) c = state.players.find(x=>x.id===currentProfileCharId);
-
+  const c = state.characters.find(x=>x.id===currentProfileCharId);
   if (!c) return;
   const ta = document.getElementById('charBioEdit');
   if (!ta) return;
@@ -1577,10 +1528,7 @@ function handleAvatarFile(e){
 
   const reader = new FileReader();
   reader.onload = () => {
-    // Ищем и в characters, и в players
-    let c = state.characters.find(x => x.id === currentProfileCharId);
-    if (!c) c = state.players.find(x => x.id === currentProfileCharId);
-    
+    const c = state.characters.find(x => x.id === currentProfileCharId);
     if (!c) return;
     c.avatar = reader.result;       // dataURL
     save();
@@ -1591,11 +1539,9 @@ function handleAvatarFile(e){
 
 
 // === отношения ===
-// ИСПРАВЛЕНИЕ: Восстановлено форматирование строк.
 function renderRelations(){
   const box = $('#relationsList');
-  box.innerHTML = state.characters.filter(c => c.id !== state.activePlayerId).map(c=>{
-    const appr = (c.approval[state.activePlayerId] ?? 50);
+box.innerHTML = state.characters.filter(c => c.id !== state.activePlayerId).map(c=>{    const appr = (c.approval[state.activePlayerId] ?? 50);
     const thought = c.lastThought ? clip(c.lastThought, 180) : '—';
     return `
       <div class="rel-card" onclick="openCharacterProfile('${c.id}')">
@@ -1663,7 +1609,7 @@ function setupComposeSocial(){
     state.posts.push(p);
     
     try {
-      // 2. ЖДЕМ ЗАВЕРШЕНИЯ (здесь может быть ошибка, если нет API)
+      // 2. ЖДЕМ ЗАВЕРШЕНИЯ (здесь может быть ошибка)
       await applyReactionsAndShowModal(p, false);
     } catch (e) {
       console.error("Ошибка при публикации (social):", e);
@@ -1684,7 +1630,7 @@ function setupComposeSocial(){
     triggerNpcPostGeneration(p);
     setActiveView('feed');
   };
-} // <--- ИСПРАВЛЕНИЕ: Добавлена критически важная закрывающая скобка!
+} // <--- УБЕДИСЬ, ЧТО ЗДЕСЬ НЕТ ЛИШНЕЙ } СКОБКИ
 
 // === сюжетный пост ===
 
@@ -1771,31 +1717,17 @@ function threadKey(charId, playerId=state.activePlayerId){
   return `${charId}_${playerId}`;
 }
 
-// ИСПРАВЛЕНИЕ: Восстановлено форматирование строк.
 function syncDmSelectors(){
   const sel = $('#dmSelect');
-  sel.innerHTML = state.characters.filter(c => c.id !== state.activePlayerId).map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
-  
-  // Убедимся, что выбранное значение существует, иначе выберем первое доступное
-  if(!sel.value) {
-      const firstAvailable = state.characters.find(c => c.id !== state.activePlayerId);
-      if (firstAvailable) sel.value = firstAvailable.id;
-  }
-
-  const current = state.characters.find(c=>c.id===sel.value);
+sel.innerHTML = state.characters.filter(c => c.id !== state.activePlayerId).map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
+  if(!sel.value && state.characters[0]) sel.value = state.characters[0].id;  const current = state.characters.find(c=>c.id===sel.value);
   $('#dmTitle').textContent = 'ЛС · ' + (current?.name || '');
-  
-  if (sel.value) {
-    renderDmThread(sel.value);
-  }
+  renderDmThread(sel.value);
 }
 
 function openDm(charId){
   setActiveView('dm');
-  // Убедимся, что персонаж есть в списке, прежде чем выбирать
-  if ($('#dmSelect option[value="' + charId + '"]').length > 0) {
-      $('#dmSelect').value = charId;
-  }
+  $('#dmSelect').value = charId;
   const c = state.characters.find(x=>x.id===charId);
   $('#dmTitle').textContent = 'ЛС · ' + (c?.name || '');
   renderDmThread(charId);
@@ -1831,7 +1763,6 @@ function setupDm(){
 
   $('#dmSend').onclick = async ()=>{
     const charId = $('#dmSelect').value;
-    if (!charId) return;
     const text = $('#dmInput').value.trim();
     if (!text) return;
 
@@ -1842,33 +1773,243 @@ function setupDm(){
       await aiReplyToDm(charId);
     }
   };
-
-  // Добавим отправку по Enter
-  $('#dmInput').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      $('#dmSend').click();
-    }
-  });
 }
 
 // === AI-реакции на пост и мысли в профиле ===
 
 // Генерация глубокой реакции персонажа на пост
 async function aiGenerateReactionText(char, player, post, delta, isStory) {
-  // ... (Весь код AI функций оставлен без изменений, так как синтаксис там верный)
-  // (Код опущен для краткости, но он необходим для работы AI)
-  return generateThought(char, post, delta); // Упрощенный fallback
+  const relationsSummary = buildRelationsSummary(char);
+  const shortPost = post.content.length > 240
+    ? post.content.slice(0, 240) + '…'
+    : post.content;
+
+  const emotionalTone =
+    Math.abs(delta) >= 3 ? 'сильную эмоциональную' : 'лёгкую, но заметную';
+  const valence = delta > 0
+    ? 'скорее позитивную'
+    : delta < 0
+      ? 'скорее негативную'
+      : 'скорее смешанную или нейтральную';
+  const postType = isStory ? 'сюжетный пост' : 'обычный пост в ленте';
+
+  const prompt = `
+Ты — ${char.name} (${char.username}) из семейной саги.
+У тебя есть своя биография и связи:
+
+БИО:
+${char.bio}
+
+СВЯЗИ:
+${relationsSummary}
+
+Сейчас игрок ${player.name} опубликовал ${postType}.
+Текст поста:
+"""${shortPost}"""
+
+Твоя задача — придумать короткую, очень характерную РЕАКЦИЮ ${char.name} на этот пост.
+
+Требования:
+- 1–2 предложения по-русски.
+- От третьего лица: как сообщение-наблюдение, например
+  "Кристиан усмехнулся: ..." или "Ева подумала, что ...".
+- Покажи мотивацию персонажа и его отношение к игроку.
+- Учти, что реакция должна быть ${emotionalTone} и ${valence}.
+- Не обращайся напрямую к ИИ, к серверу и т.п.
+- НИКАКИХ фраз вроде "я не могу нормально ответить", "сервер недоступен" и т.п.
+Ответь только текстом реакции, без подпунктов и без пояснений.
+
+Помни, кто такой ${char.name}, и как он относится к игроку ${player.name}.
+  `.trim();
+
+    const aiText = await askAI(prompt);
+  if (!aiText) return null;
+
+  const cleaned = aiText.replace(/\s+/g, ' ').trim().replace(/^"|"$/g,'');
+  const lower = cleaned.toLowerCase();
+  const badPhrases = [
+    'не могу нормально ответить',
+    'не могу сейчас нормально ответить',
+    'связь с сервером',
+    'давай позже',
+    'я сейчас не могу'
+  ];
+  if (!cleaned || badPhrases.some(p => lower.includes(p))) {
+    return null; // НИКАКИХ заготовок
+  }
+  return cleaned;
+
 }
 
-// ... (Остальные функции AI: aiGenerateProfileThought, worldSnapshot, aiGenerateAmbientCharacterTweet, 
-// aiGenerateNpcWorldTweet, fallbackNpcTweet, aiGenerateOutletPost, fallbackOutletTweet, aiGenerateNpcPost)
+// Мысль персонажа о игроке в профиле
+async function aiGenerateProfileThought(char) {
+  const me = currentPlayer();
+  const appr = char.approval[state.activePlayerId] ?? 50;
+  const relationsSummary = buildRelationsSummary(char);
 
+  const moodLabel =
+    appr >= 85 ? 'глубокую привязанность и доверие'
+    : appr >= 70 ? 'очень тёплое, доверительное отношение'
+    : appr >= 50 ? 'скорее нейтральное, но внимательное отношение'
+    : appr >= 30 ? 'напряжение и сомнения'
+    : 'сильное недоверие или обиду';
 
-// Эта функция запускает «вдогонку» генерацию постов
+  const prompt = `
+Ты — ${char.name} (${char.username}) из семейной саги.
+
+БИО:
+${char.bio}
+
+Связи и отношения:
+${relationsSummary}
+
+Сейчас ты думаешь именно о игроке ${me.name}.
+Текущее отношение к нему: ${appr} из 100, это ${moodLabel}.
+
+Сформулируй одну короткую мысль о нём (1–2 предложения).
+Формат:
+- по-русски
+- без обращения к читателю
+- как внутренняя ремарка / наблюдение, например:
+  "Для него свобода всегда важнее правил, и это одновременно раздражает и восхищает."
+  "Слишком много упрямства в этом мальчике, но именно оно не даёт ему сломаться."
+
+НЕ упоминай, что ты персонаж игры, ИИ или что есть сервер.
+Ответь только текстом мысли, без пояснений.
+  `.trim();
+
+  const aiText = await askAI(prompt);
+  if (!aiText) return '';
+
+  const cleaned = aiText.replace(/\s+/g, ' ').trim();
+  const lower = cleaned.toLowerCase();
+
+  const badPhrases = [
+    'не могу нормально ответить',
+    'не могу сейчас нормально ответить',
+    'связь с сервером',
+    'я сейчас не могу'
+  ];
+  if (!cleaned ||
+      badPhrases.some(p => lower.includes(p))) {
+    return '';
+  }
+
+  return cleaned;
+}
+
+// (вставь это перед 'async function aiGenerateProfileThought(char)')
+
+// Генерация ПУБЛИЧНОГО поста (твита) от лица NPC
+async function aiGenerateNpcPost(char, player, playerPost) {
+  const relationsSummary = buildRelationsSummary(char);
+  const shortPlayerPost = clip(playerPost.content, 150);
+  
+  // КЛЮЧЕВОЙ МОМЕНТ:
+  // Мы берем "секретную мысль" персонажа, которую только что сгенерировали
+  // для модального окна, и используем ее как основу для публичного поста.
+  const privateThought = char.lastThought; 
+
+  const prompt = `
+Ты — персонаж ${char.name} (${char.username}) из семейной саги.
+Твоя биография и канон:
+${char.bio}
+
+Твои связи с другими:
+${relationsSummary}
+
+Только что, игрок ${player.name} (${player.username}) опубликовал пост:
+"""${shortPlayerPost}"""
+
+Твоя НЕМЕДЛЕННАЯ, ПЕРВАЯ, СЕКРЕТНАЯ мысль об этом посте была:
+"""${privateThought}"""
+
+ЗАДАЧА:
+Основываясь на своей личности, каноне И этой своей секретной мысли, напиши короткий, публичный "твит" (пост в соцсеть) от своего имени.
+Это может быть прямая реакция на пост ${player.name} или просто мысль "по мотивам" ("Некоторые люди никогда не меняются...").
+
+ТРЕБОВАНИЯ:
+1.  **Это ПУБЛИЧНЫЙ пост.** Он должен быть в твоём стиле (${char.tone}).
+2.  **Формат:** Коротко (1-3 предложения), по-русски, от первого лица (от ${char.name}).
+3.  **НИКАКИХ** хэштегов, смайликов (если это не в стиле ${char.tone}), или обращений к "серверу" / "ИИ".
+4.  **ВАЖНО:** Если твоя "секретная мысль" ("${privateThought}") была нейтральной или скучной, или если тебе нечего сказать публично — просто верни ПУСТУЮ СТРОКУ.
+
+Ответь ТОЛЬКО текстом твита, или пустой строкой.
+`.trim();
+
+  const aiText = await askAI(prompt);
+  if (!aiText) return null; // Ошибка ИИ
+
+  // Убираем лишние кавычки, которые ИИ любит добавлять
+  const cleaned = aiText.replace(/^"|"$/g, '').trim(); 
+
+  // Фильтруем "ответы-заглушки" от ИИ
+  const lower = cleaned.toLowerCase();
+  const badPhrases = [
+    'не могу', 'сервер', 'ошибка', 'я не знаю', 'как ии', 'как персонаж',
+    'твит:', 'пост:', 'я напишу:', 'хорошо, вот', 'пустая строка'
+  ];
+  
+  // Если ответ слишком короткий или содержит "плохие" фразы, считаем, что NPC решил промолчать
+  if (!cleaned || cleaned.length < 10 || badPhrases.some(p => lower.includes(p))) {
+    return null; 
+  }
+
+  return cleaned;
+}
+
+// Эта функция запускает "вдогонку" генерацию постов от NPC
 async function triggerNpcPostGeneration(playerPost) {
-  // ... (Логика фоновой генерации постов)
-}
+  // Находим персонажей, которые могут отреагировать (все, кроме автора)
+  const charactersToReact = getRelevantCharacters(playerPost);
+  const player = state.players.find(p => p.id === playerPost.authorId);
+  let newPostsGenerated = false;
 
+  console.log(`Запускаем генерацию NPC-постов в ответ на пост ${player.name}...`);
+
+  for (const char of charactersToReact) {
+    // Определяем, сколько постов напишет персонаж (0, 1 или 2)
+    let postCount = 0;
+    const roll = Math.random();
+    
+    if (roll > 0.95) {      // 5% шанс на 2 поста
+      postCount = 2;
+    } else if (roll > 0.6) { // 35% шанс на 1 пост
+      postCount = 1;         // (60% шанс на 0 постов)
+    }
+
+    for (let i = 0; i < postCount; i++) {
+      // Просим ИИ сгенерировать текст твита
+      const postContent = await aiGenerateNpcPost(char, player, playerPost);
+      
+      if (postContent) {
+        // Если ИИ вернул текст (а не null), создаем новый пост
+        const p = postObj({
+          type: 'social', // NPC пишут только "твиты"
+          authorType: 'character',
+          authorId: char.id,
+          content: postContent,
+          relatedCharacters: [playerPost.authorId] // Пост связан с игроком
+        });
+        
+        state.posts.push(p);
+        newPostsGenerated = true;
+        console.log(`${char.name} опубликовал пост: "${postContent}"`);
+      }
+    }
+  }
+
+  // Если хотя бы один новый пост был создан...
+  if (newPostsGenerated) {
+    console.log('NPC закончили постить, обновляем ленту.');
+    save(); // Сохраняем все новые посты
+    
+    // Перерисовываем ленту, только если пользователь сейчас на ней
+    if ($('#view-feed').classList.contains('active')) {
+      renderFeed();
+    }
+  }
+}
 
 // === реакции ===
 let lastReactionPostId = null;
@@ -1881,16 +2022,21 @@ function formatDelta(delta){
   return `${sign}${abs.toFixed(digits)}%`;
 }
 
+// применяем реакции и открываем модалку
 async function applyReactionsAndShowModal(post, isStory){
   lastReactionPostId = post.id;
   const wrap = $('#modalReactions');
 
-  // считаем «в фоне» (крутится спиннер на кнопке публикации)
-  const rxList = await computeReactions(post, isStory);
+  // 1. СРАЗУ ПОКАЗЫВАЕМ МОДАЛКУ С "ТРЕМЯ ТОЧКАМИ"
+  wrap.innerHTML = '<div class="loader-dots"></div>';
+  $('#reactionModal').classList.remove('hidden');
 
-  // Готовим контент модалки
+  // 2. ЖДЕМ, ПОКА ИИ "ДУМАЕТ"
+  const rxList = await computeReactions(post, isStory);
+  
+  // 3. ТЕПЕРЬ ЗАМЕНЯЕМ "ТОЧКИ" НА РЕЗУЛЬТАТ
   if(!rxList.length){
-    wrap.innerHTML = `<p>Никто из ключевых персонажей не отреагировал (или произошла ошибка связи с AI).</p>`;
+    wrap.innerHTML = `<p>Никто из ключевых персонажей не отреагировал.</p>`;
   }else{
     wrap.innerHTML = rxList.slice(0,5).map(rx=>{
       const c = state.characters.find(k=>k.id===rx.charId);
@@ -1901,54 +2047,72 @@ async function applyReactionsAndShowModal(post, isStory){
       </div>`;
     }).join('');
   }
-
-  // Показываем модалку уже с готовыми реакциями
-  $('#reactionModal').classList.remove('hidden');
+  // (модалка уже и так была показана)
 }
 
 // считаем реакции и меняем отношения
-async function computeReactions(post, isStory){
-  const relevant = getRelevantCharacters(post);
+// ТЕПЕРЬ: реагируют только 1–5 персонажей, выбранных ИИ
+async function computeReactions(post, isStory) {
   const me = currentPlayer();
   const out = [];
 
-  for (const c of relevant){
+  // 1. Спрашиваем ИИ: кто вообще будет реагировать?
+  const plan = await aiPickReactors(post, 5);
+
+  // Если ИИ сломался или вернул ерунду — выбираем сами
+  const chosenIds =
+    plan && plan.length
+      ? plan.map(r => r.id)
+      : getHeuristicReactors(post, 5);
+
+  for (const charId of chosenIds) {
+    const c = state.characters.find(x => x.id === charId);
+    if (!c) continue;
+
     const currentAppr = c.approval[state.activePlayerId] ?? 50;
 
-    // базовая сила реакции
-    const base   = isStory ? 1.5 : 0.6;   // сюжетные сильнее
-    const spread = isStory ? 3.0 : 2.0;   // разброс
+    // 2. Берём дельту из плана ИИ, если она есть. Иначе считаем по старой формуле
+    let delta = null;
+    if (plan) {
+      const found = plan.find(r => r.id === charId);
+      if (found && typeof found.delta === 'number') {
+        delta = clamp(found.delta, -5, 5);
+      }
+    }
 
-    // bias от текущей близости
-    const moodBias = (currentAppr - 50) / 50;
+    if (delta === null) {
+      const base = isStory ? 1.5 : 0.6;
+      const spread = isStory ? 3.0 : 2.0;
+      const moodBias = (currentAppr - 50) / 50;
+      let raw = base + spread * (Math.random() - 0.5) + moodBias;
 
-    let raw = base + spread * (Math.random() - 0.5) + moodBias;
+      if (Math.abs(raw) < 0.3) {
+        raw = raw / 4;
+      }
+      if (Math.random() < 0.25) {
+        raw = -raw;
+      }
 
-    // очень слабые реакции приглушаем
-    if (Math.abs(raw) < 0.3) raw = raw / 4;
+      delta = Math.round(raw * 4) / 4;
+      delta = clamp(delta, -5, 5);
+    }
 
-    // иногда инвертируем знак
-    if (Math.random() < 0.25) raw = -raw;
+    // 3. Просим ИИ написать текст реакции
+    const text = await aiGenerateReactionText(
+      c,
+      me,
+      post,
+      delta,
+      isStory
+    );
 
-    // шаг 0.25, ограничение [-5;5]
-    let delta = Math.round(raw * 4) / 4;
-    delta = clamp(delta, -5, 5);
+    // ЕСЛИ ИИ НЕ СМОГ НИЧЕГО НАПИСАТЬ — этот персонаж просто молчит
+    if (!text) continue;
 
-    // текст реакции
-    const text = await aiGenerateReactionText(c, me, post, delta, isStory);
-
-    // применяем изменение отношения
+    // 4. Обновляем отношение и сохраняем реакцию
     const newAppr = clamp(currentAppr + delta, 0, 100);
     c.approval[state.activePlayerId] = newAppr;
-
-    // НАЗВАНИЕ отношений — через ИИ (с фоллбэком)
-    try{
-      const title = await aiGenerateRelationTitle(c, me, newAppr, delta);
-      if (!c.relationTitles) c.relationTitles = {};
-      c.relationTitles[state.activePlayerId] = title;
-    }catch(e){
-      // молча игнорируем
-    }
+    c.lastThought = text;
 
     const rx = reactionObj(post.id, c.id, text, delta);
     state.reactions.push(rx);
@@ -1960,6 +2124,10 @@ async function computeReactions(post, isStory){
   return out;
 }
 
+function openReactionsForPost(postId){
+  lastReactionPostId = postId;
+  setActiveView('reactions');
+}
 
 function renderReactions(){
   const wrap = $('#reactionsList');
@@ -1972,17 +2140,7 @@ function renderReactions(){
     return;
   }
 
-  // Добавим информацию о фильтре и кнопку сброса
-  let filterInfo = '';
-  if (lastReactionPostId) {
-      const p = state.posts.find(p=>p.id===lastReactionPostId);
-      filterInfo = `<div style="margin-bottom: 1rem; padding: 0.5rem; background: var(--bg); border-radius: 12px;">
-          Фильтр по посту: "${clip(p?.content || '', 50)}" 
-          <button class="secondary" onclick="clearReactionFilter()" style="padding: 0.2rem 0.5rem;">Сбросить</button>
-      </div>`;
-  }
-
-  wrap.innerHTML = filterInfo + items.map(r=>{
+  wrap.innerHTML = items.map(r=>{
     const c = state.characters.find(x=>x.id===r.charId);
     const p = state.posts.find(p=>p.id===r.postId);
     const cls = r.delta >= 0 ? 'pos' : 'neg';
@@ -2001,11 +2159,6 @@ function renderReactions(){
       </div>
     `;
   }).join('');
-}
-
-function clearReactionFilter() {
-    lastReactionPostId = null;
-    renderReactions();
 }
 
 // === генерация мыслей / ботов ===
@@ -2049,54 +2202,17 @@ function generateThought(char, post, delta){
 
 // === утилиты ===
 
-// Помощник: это id игрока?
-function isPlayerId(id){
-  return state.players.some(p => p.id === id);
+function getRelevantCharacters(post) {
+  // Теперь она возвращает всех, КРОМЕ автора поста.
+  // (post.authorId будет 'player1' или 'player2' для игроков)
+  return state.characters.filter(c => c.id !== post.authorId);
 }
-
-function getRelevantCharacters(post){
-  // исключаем игроков (они пишут сами) и автора
-  //const playerIds = new Set(state.players.map(p=>p.id));
-  const meId = state.activePlayerId;
-
-  const txt = (post.content||'').toLowerCase();
-
-  const scored = state.characters
-    // Фильтруем только тех, кто не является текущим активным игроком
-    .filter(c => c.id !== meId && c.id !== post.authorId)
-    .map(c => {
-      let score = 0;
-      const appr = c.approval?.[meId] ?? 50;
-      score += appr; // кто теплее относится — более вероятно реагирует
-
-      // если упомянуты имя или username — усиливаем
-      if (c.name && txt.includes(c.name.toLowerCase())) score += 40;
-      if (c.username && txt.includes(c.username.slice(1).toLowerCase())) score += 25;
-
-      // лёгкий бонус, если уже недавно думал/писал
-      if (c.lastThought) score += 5;
-
-      return { c, score };
-    })
-    .sort((a,b)=>b.score - a.score)
-    .map(x=>x.c);
-
-  const k = Math.min(scored.length, randint(2,5));
-  return scored.slice(0, k);
-}
-
 
 function authorName(p){
   if(!p) return '—';
   if(p.authorType==='player')
     return state.players.find(x=>x.id===p.authorId)?.name || 'Игрок';
-  if(p.authorType==='character')
-    return state.characters.find(x=>x.id===p.authorId)?.name || 'Персонаж';
-  if(p.authorType==='npc')
-    return state.npcs.find(x=>x.id===p.authorId)?.name || 'Житель';
-  if(p.authorType==='outlet')
-    return state.outlets.find(x=>x.id===p.authorId)?.name || 'Медиа';
-  return 'Автор';
+  return state.characters.find(x=>x.id===p.authorId)?.name || 'Персонаж';
 }
 
 function currentPlayer(){ return state.players.find(p=>p.id===state.activePlayerId); }
@@ -2121,10 +2237,8 @@ function setupPlayers(){
   sel.onchange = ()=>{
     state.activePlayerId = sel.value;
     save();
-    // Обновляем всё при смене игрока
     renderRelations();
     renderFeed();
-    syncDmSelectors();
   };
 }
 
@@ -2142,24 +2256,6 @@ function setupMyProfileButton() {
   };
 }
 
-// --- ФОНОВЫЕ ПОСТЫ МИРА ---
-
-const AMBIENT_MIN_MS = 45000;   // минимум 45 секунд
-const AMBIENT_MAX_MS = 120000;  // максимум 120 секунд
-
-async function ambientPostsTick(){
-  // ... (Логика фоновых постов - зависит от AI)
-}
-
-function scheduleAmbientPosting(){
-  const ms = randint(AMBIENT_MIN_MS, AMBIENT_MAX_MS);
-  setTimeout(async ()=>{
-    try { await ambientPostsTick(); } catch(e){ console.error("Ошибка фонового постинга (AI недоступен?)", e); }
-    scheduleAmbientPosting();
-  }, ms);
-}
-
-
 // === старт приложения ===
 document.addEventListener('DOMContentLoaded', ()=>{
   load();
@@ -2173,7 +2269,6 @@ document.addEventListener('DOMContentLoaded', ()=>{
   setupMyProfileButton();
   renderFeed();
   renderRelations();
-  // scheduleAmbientPosting(); // Включать только если есть работающий AI API
 });
 </script>
 
