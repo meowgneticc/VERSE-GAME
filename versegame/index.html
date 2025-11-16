@@ -1118,6 +1118,7 @@ function addQuickComment(postId){
 
 // === CHARACTER PROFILE ===
 let currentProfileCharId = null;
+let isEditingBio = false;
 
 function relationLabelFromValue(v){
   if (v >= 85) return 'душевная близость';
@@ -1129,6 +1130,7 @@ function relationLabelFromValue(v){
 
 function openCharacterProfile(charId){
   currentProfileCharId = charId;
+  isEditingBio = false;          // при открытии профиля выходим из режима редактирования
   renderCharacterProfile();
   setActiveView('character');
 }
@@ -1149,6 +1151,26 @@ function renderCharacterProfile(){
     ? `<img src="${c.avatar}" alt="${c.name}">`
     : '';
 
+  // показываем textarea только если включён режим редактирования
+  const editBlock = isEditingBio
+    ? `<textarea id="charBioEdit" class="char-bio-edit" rows="6"
+        placeholder="Подробное описание персонажа, его характер, травмы, отношения, триггеры и т.п.">${bio}</textarea>`
+    : '';
+
+  // разные кнопки для режимов
+  const actions = isEditingBio
+    ? `
+      <button class="primary" onclick="saveCharacterBio()">Сохранить описание</button>
+      <button class="secondary" onclick="cancelEditBio()">Отмена</button>
+      <button class="ghost" onclick="openDm('${c.id}')">Перейти в ЛС</button>
+      <button class="ghost" onclick="setActiveView('relations')">Назад к списку</button>
+    `
+    : `
+      <button class="secondary" onclick="startEditBio()">Редактировать описание</button>
+      <button class="secondary" onclick="openDm('${c.id}')">Перейти в ЛС</button>
+      <button class="ghost" onclick="setActiveView('relations')">Назад к списку</button>
+    `;
+
   box.innerHTML = `
     <div class="char-cover"></div>
     <div class="char-header">
@@ -1164,8 +1186,7 @@ function renderCharacterProfile(){
         ${bio.replace(/\n/g,'<br>')}
       </div>
 
-      <textarea id="charBioEdit" class="char-bio-edit" rows="6"
-        placeholder="Подробное описание персонажа, его характер, травмы, отношения, триггеры и т.п.">${bio}</textarea>
+      ${editBlock}
 
       <div class="char-rel-block">
         <div class="char-rel-label-row">
@@ -1181,9 +1202,7 @@ function renderCharacterProfile(){
       </div>
 
       <div class="char-actions-row">
-        <button class="primary" onclick="saveCharacterBio()">Сохранить описание</button>
-        <button class="secondary" onclick="openDm('${c.id}')">Перейти в ЛС</button>
-        <button class="ghost" onclick="setActiveView('relations')">Назад к списку</button>
+        ${actions}
       </div>
     </div>
   `;
@@ -1197,8 +1216,16 @@ function saveCharacterBio(){
   if (!ta) return;
   c.bio = ta.value.trim();
   save();
-  // лёгкий фидбек, можно убрать alert если раздражает
-  alert('Описание персонажа сохранено.');
+  isEditingBio = false;
+  renderCharacterProfile();
+}
+function startEditBio(){
+  isEditingBio = true;
+  renderCharacterProfile();
+}
+
+function cancelEditBio(){
+  isEditingBio = false;
   renderCharacterProfile();
 }
 
