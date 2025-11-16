@@ -890,6 +890,42 @@ function seedIfEmpty(){
 
   state.characters = [
     {
+      id:'player1', // <--- ID совпадает с player
+      name:'Грейсон',
+      username:'@LiqueurD',
+      tone:'stoic', // (Можешь поменять)
+      followers:320,
+      bio:'(Впиши сюда канон Грейсона. ИИ будет использовать это для реакций)',
+      relations:{}, // (Можно заполнить позже)
+      approval:{
+        // Мнение Грейсона о других:
+        player2: 50, // (Мнение о Лорантисе)
+        kristian: 60,
+        vivien: 70
+        // ... (можно добавить остальных)
+      },
+      lastThought:'',
+      avatar:'' // (Аватар можно будет загрузить через профиль)
+    },
+    {
+      id:'player2', // <--- ID совпадает с player
+      name:'Лорантис',
+      username:'@tinktloran',
+      tone:'warm', // (Можешь поменять)
+      followers:340,
+      bio:'(Впиши сюда канон Лорантиса. ИИ будет использовать это для реакций)',
+      relations:{},
+      approval:{
+        // Мнение Лорантиса о других:
+        player1: 50, // (Мнение о Грейсоне)
+        kristian: 40,
+        aurora: 75
+        // ... (можно добавить остальных)
+      },
+      lastThought:'',
+      avatar:''
+    },
+    {
       id:'kristian',
       name:'Кристиан Вольт',
       username:'@shiningshining',
@@ -1390,8 +1426,7 @@ function handleAvatarFile(e){
 // === отношения ===
 function renderRelations(){
   const box = $('#relationsList');
-  box.innerHTML = state.characters.map(c=>{
-    const appr = (c.approval[state.activePlayerId] ?? 50);
+box.innerHTML = state.characters.filter(c => c.id !== state.activePlayerId).map(c=>{    const appr = (c.approval[state.activePlayerId] ?? 50);
     const thought = c.lastThought ? clip(c.lastThought, 180) : '—';
     return `
       <div class="rel-card" onclick="openCharacterProfile('${c.id}')">
@@ -1565,9 +1600,8 @@ function threadKey(charId, playerId=state.activePlayerId){
 
 function syncDmSelectors(){
   const sel = $('#dmSelect');
-  sel.innerHTML = state.characters.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
-  if(!sel.value && state.characters[0]) sel.value = state.characters[0].id;
-  const current = state.characters.find(c=>c.id===sel.value);
+sel.innerHTML = state.characters.filter(c => c.id !== state.activePlayerId).map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
+  if(!sel.value && state.characters[0]) sel.value = state.characters[0].id;  const current = state.characters.find(c=>c.id===sel.value);
   $('#dmTitle').textContent = 'ЛС · ' + (current?.name || '');
   renderDmThread(sel.value);
 }
@@ -1928,10 +1962,9 @@ function generateThought(char, post, delta){
 // === утилиты ===
 
 function getRelevantCharacters(post) {
-  // Временная реализация: просто возвращаем всех персонажей.
-  // Позже здесь можно будет сделать сложную логику
-  // (например, только тех, кто упомянут, или кто сейчас "в игре")
-  return state.characters;
+  // Теперь она возвращает всех, КРОМЕ автора поста.
+  // (post.authorId будет 'player1' или 'player2' для игроков)
+  return state.characters.filter(c => c.id !== post.authorId);
 }
 
 function authorName(p){
