@@ -616,8 +616,6 @@
 
   </style>
 </head>
-  </style>
-</head>
 <body>
   <div id="app">
     <!-- Top bar -->
@@ -1418,72 +1416,117 @@ function renderRelations(){
 }
 
 // === создание обычного поста ===
-  function setupComposeSocial(){
-    // ... (код для превью фото остается без изменений) ...
+function setupComposeSocial(){
+  
+  // (Я восстановил этот код, ты его случайно удалил)
+  $('#composePhoto').addEventListener('change', (e) => {
+     const file = e.target.files[0];
+     if(file){
+       const reader = new FileReader();
+       reader.onload = (ev) => {
+         $('#composePhotoPreview').innerHTML = `<img src="${ev.target.result}" alt="preview">`;
+       };
+       reader.readAsDataURL(file);
+     } else {
+       $('#composePhotoPreview').innerHTML = '';
+     }
+  });
 
-    // публикация обычного поста
-    const btn = $('#publishSocialBtn'); // Получаем кнопку один раз
+  // публикация обычного поста
+  const btn = $('#publishSocialBtn'); // Получаем кнопку один раз
+  
+  btn.onclick = async ()=>{
+    const content   = $('#composeText').value.trim();
+    const photoData = $('#composePhotoPreview img')?.getAttribute('src') || null;
+
+    if (!content){
+      alert('Напиши текст поста');
+      return;
+    }
+
+    // 1. ПОКАЗЫВАЕМ ЗАГРУЗКУ
+    btn.classList.add('loading');
+
+    const p = postObj({
+      type:'social',
+      authorType:'player',
+      authorId: state.activePlayerId,
+      content,
+      relatedCharacters: [],
+      photoData
+    });
+
+    state.posts.push(p);
     
-    btn.onclick = async ()=>{
-      const content   = $('#composeText').value.trim();
-      const photoData = $('#composePhotoPreview img')?.getAttribute('src') || null;
+    try {
+      // 2. ЖДЕМ ЗАВЕРШЕНИЯ (здесь может быть ошибка)
+      await applyReactionsAndShowModal(p, false);
+    } catch (e) {
+      console.error("Ошибка при публикации (social):", e);
+      alert("Произошла ошибка при публикации. Попробуйте снова.");
+    } finally {
+      // 3. УБИРАЕМ ЗАГРУЗКУ (в любом случае)
+      btn.classList.remove('loading');
+    }
 
-      if (!content){
-        alert('Напиши текст поста');
-        return;
-      }
+    // очистка формы
+    $('#composeText').value = '';
+    $('#composePhoto').value = '';
+    $('#composePhotoPreview').innerHTML = '';
 
-      // 1. ПОКАЗЫВАЕМ ЗАГРУЗКУ
-      btn.classList.add('loading');
-
-      const p = postObj({
-        type:'social',
-        authorType:'player',
-        authorId: state.activePlayerId,
-        content,
-        relatedCharacters: [],
-        photoData
-      });
-
-      state.posts.push(p);
-      
-      try {
-        // 2. ЖДЕМ ЗАВЕРШЕНИЯ (здесь может быть ошибка)
-        await applyReactionsAndShowModal(p, false);
-      } catch (e) {
-        console.error("Ошибка при публикации (social):", e);
-        alert("Произошла ошибка при публикации. Попробуйте снова.");
-      } finally {
-        // 3. УБИРАЕМ ЗАГРУЗКУ (в любом случае)
-        btn.classList.remove('loading');
-      }
-
-      // очистка формы
-      $('#composeText').value = '';
-      $('#composePhoto').value = '';
-      $('#composePhotoPreview').innerHTML = '';
-
-      save();
-      renderFeed();
-      setActiveView('feed');
-    };
-  }
+    save();
+    renderFeed();
+    setActiveView('feed');
+  };
+} // <--- УБЕДИСЬ, ЧТО ЗДЕСЬ НЕТ ЛИШНЕЙ } СКОБКИ
 
 // === сюжетный пост ===
-  // ... (код для идей остается без изменений) ...
 
+// (Эти переменные нужны для идей)
+let storyIdeas = ['Нажми «Обновить идеи»'];
+let ideaIdx = 0;
+                
+function setupComposeStory() {
+  // --- Восстановленная логика «Идей» ---
+  // (Я не знаю, какие были идеи, добавил заглушки)
+  storyIdeas = [
+    "Сюжетная идея 1: Персонаж А находит...",
+    "Сюжетная идея 2: Случайная встреча в...",
+    "Сюжетная идея 3: Старый секрет..."
+  ];
+  ideaIdx = 0;
+  paintIdea(); // Показать первую идею при старте
+
+  $('#ideaPrev').onclick = () => {
+    ideaIdx = (ideaIdx - 1 + storyIdeas.length) % storyIdeas.length;
+    paintIdea();
+  };
+  $('#ideaNext').onclick = () => {
+    ideaIdx = (ideaIdx + 1) % storyIdeas.length;
+    paintIdea();
+  };
+  $('#ideaRefresh').onclick = async () => {
+    // (TODO: AI generation logic)
+    alert("Обновление идей (пока не реализовано)");
+  };
+  $('#ideaUse').onclick = () => {
+    $('#storyText').value = storyIdeas[ideaIdx] || '';
+  };
+  // ---
+                
+  // --- Логика кнопки «Опубликовать» (из прошлого шага) ---
   const btn = $('#publishStoryBtn'); // Получаем кнопку один раз
-
+                
   btn.onclick = async ()=>{
     const text = $('#storyText').value.trim();
     if(!text){
       alert('Напиши сюжетный текст или вставь идею');
       return;
     }
-  
+
     // 1. ПОКАЗЫВАЕМ ЗАГРУЗКУ
     btn.classList.add('loading');
-
+  
     const p = postObj({
       type:'story',
       authorType:'player',
@@ -1516,8 +1559,6 @@ function renderRelations(){
 function paintIdea(){
   $('#ideaText').textContent = storyIdeas[ideaIdx] || 'Идей пока нет — нажми «Обновить идеи»';
 }
-
-// === ЛС ===
 function threadKey(charId, playerId=state.activePlayerId){
   return `${charId}_${playerId}`;
 }
@@ -1885,6 +1926,14 @@ function generateThought(char, post, delta){
 
 
 // === утилиты ===
+
+function getRelevantCharacters(post) {
+  // Временная реализация: просто возвращаем всех персонажей.
+  // Позже здесь можно будет сделать сложную логику
+  // (например, только тех, кто упомянут, или кто сейчас "в игре")
+  return state.characters;
+}
+
 function authorName(p){
   if(!p) return '—';
   if(p.authorType==='player')
@@ -1894,18 +1943,6 @@ function authorName(p){
 
 function currentPlayer(){ return state.players.find(p=>p.id===state.activePlayerId); }
 
-// === утилиты ===
-
-// (вот эту функцию нужно добавить)
-function getRelevantCharacters(post) {
-  // Временная реализация: просто возвращаем всех персонажей.
-  // Позже здесь можно будет сделать сложную логику
-  // (например, только тех, кто упомянут, или кто сейчас "в игре")
-  return state.characters;
-}
-
-function authorName(p){
-// ... (остальной код утилит) ...
 
 function setupFilters(){
   const chips = $$('.filters .chip');
@@ -1918,7 +1955,6 @@ function setupFilters(){
     });
   });
 }
-
 
 function setupPlayers(){
   const sel = $('#activePlayerSelect');
