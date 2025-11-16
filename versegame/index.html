@@ -1514,72 +1514,80 @@ function setupDm(){
 // === реакции ===
 let lastReactionPostId = null;
 
-// обёртка: применяем реакции + показываем модалку
+// красивый вывод дельты: +0.25%, -3%, +4.75%
+function formatDelta(delta){
+  const sign = delta > 0 ? '+' : (delta < 0 ? '−' : '');
+  const abs  = Math.abs(delta);
+  const digits = abs >= 1 ? (abs % 1 === 0 ? 0 : 2) : 2;
+  return `${sign}${abs.toFixed(digits)}%`;
+}
+
+// применяем реакции и открываем модалку
 async function applyReactionsAndShowModal(post, isStory){
   const rxList = await computeReactions(post, isStory);
   lastReactionPostId = post.id;
 
   const wrap = $('#modalReactions');
-  if (!rxList.length){
+  if(!rxList.length){
     wrap.innerHTML = `<p>Никто из ключевых персонажей не отреагировал.</p>`;
-  } else {
+  }else{
     wrap.innerHTML = rxList.slice(0,5).map(rx=>{
       const c = state.characters.find(k=>k.id===rx.charId);
-     const d = `<span class="delta ${rx.delta >= 0 ? 'pos' : 'neg'}">
-  ${formatDelta(rx.delta)}
-</span>`;
+      const cls = rx.delta >= 0 ? 'pos' : 'neg';
       return `<div class="react-item">
         <div><strong>${c?.name||'?'}</strong>: ${rx.text}</div>
-        <div class="delta">${d}</div>
+        <div class="delta ${cls}">${formatDelta(rx.delta)}</div>
       </div>`;
     }).join('');
   }
-
   $('#reactionModal').classList.remove('hidden');
 }
 
-// основная логика вычисления реакций с ИИ
+// считаем реакции и меняем отношения
 async function computeReactions(post, isStory){
   const relevant = getRelevantCharacters(post);
+  const me = currentPlayer();
   const out = [];
 
   for (const c of relevant){
-    const before = c.approval?.[state.activePlayerId] ?? 50;
+    const currentAppr = c.approval[state.activePlayerId] ?? 50;
 
-    // --- сколько СИЛЬНО задело персонажа ---
-    let impact = 0.25; // минимальное изменение
+    // базовая сила реакции
+    const base = isStory ? 1.5 : 0.6;     // сюжетные сильнее
+    const spread = isStory ? 3.0 : 2.0;   // разброс
 
-    const isDirect = (post.relatedCharacters || []).includes(c.id);
-    if (isDirect) impact += 1.5;       // если пост явно про него
-    if (isStory)  impact += 1.0;       // сюжетка бьёт сильнее
+    // если уже любит/ненавидит — реагирует эмоциональнее
+    const moodBias = (currentAppr - 50) / 50; // от -1 до +1
 
-    const dist = Math.abs(before - 50) / 50; // 0..1 — чем дальше от нейтрала, тем сильнее реакция
-    impact += dist * 1.5;
+    let raw = base + spread * (Math.random() - 0.5) + moodBias;
 
-    impact += Math.random();           // чуть хаоса 0..1
-
-    // --- знак реакции (плюс / минус) ---
-    const bias   = (before - 50) / 50; // -1..1: любит / ненавидит игрока
-    let probPos  = 0.5 + bias * 0.35;  // чем лучше отношение, тем выше шанс плюса
-    probPos      = clamp(probPos, 0.15, 0.85);
-
-    const isPositive = Math.random() < probPos;
-    let delta = impact * (isPositive ? 1 : -1);
-
-    // верхняя граница по модулю
-    const max = (isStory || isDirect) ? 6 : 3;
-    delta = clamp(delta, -max, max);
-
-    const after = clamp(before + delta, 0, 100);
-
-    // --- текст реакции через ИИ + фоллбэк ---
-    let text = await aiGenerateReactionText(c, post, delta, before, after, isStory);
-    if (!text) {
-      text = generateThought(c, post, delta); // если ИИ молчит — старый рандомный генератор
+    // иногда реакция может быть совсем слабой
+    // (около нуля — почти без изменений)
+    if (Math.abs(raw) < 0.3) {
+      raw = raw / 4; // ещё мягче
     }
 
-    // сохраняем состояние
-    c.approval[state.activePlayerId] = after;
+    // случайно инвертируем знак, чтобы были и минусы
+    if (Math.random() < 0.25) {
+      raw = -raw;
+    }
+
+    // квантуем до шагов по 0.25
+    let delta = Math.round(raw * 4) / 4;
+    delta = clamp(delta, -5, 5); // жёсткий предел
+
+    // текст реакции от ИИ
+    const text = await aiGenerateReactionText(
+      c,
+      me,
+      post,
+      delta,
+      isStory
+    );
+
+    // обновляем отношение
+    const newAppr = clamp(currentAppr + delta, 0, 100);
+    c.approval[state.activePlayerId] = newAppr;
     c.lastThought = text;
 
     const rx = reactionObj(post.id, c.id, text, delta);
@@ -1592,28 +1600,6 @@ async function computeReactions(post, isStory){
   return out;
 }
 
-function getRelevantCharacters(post){
-  const set = new Set(post.relatedCharacters || []);
-
-  (post.relatedCharacters || []).forEach(id=>{
-    const c = state.characters.find(x=>x.id===id);
-    if(!c || !c.relations) return;
-    const partner = Object.entries(c.relations).sort((a,b)=>b[1]-a[1])[0]?.[0];
-    if(partner) set.add(partner);
-  });
-
-  if(!set.size){
-    const chars = state.characters.slice().sort((a,b)=>{
-      const da = Math.abs((a.approval[state.activePlayerId] ?? 50) - 50);
-      const db = Math.abs((b.approval[state.activePlayerId] ?? 50) - 50);
-      return db - da;
-    }).slice(0, randint(1,3));
-    chars.forEach(c=>set.add(c.id));
-  }
-
-  return Array.from(set).map(id=>state.characters.find(c=>c.id===id)).filter(Boolean);
-}
-
 function openReactionsForPost(postId){
   lastReactionPostId = postId;
   setActiveView('reactions');
@@ -1624,6 +1610,7 @@ function renderReactions(){
   const items = state.reactions
     .filter(r=>!lastReactionPostId || r.postId===lastReactionPostId)
     .slice().sort((a,b)=>b.at.localeCompare(a.at));
+
   if(!items.length){
     wrap.innerHTML = `<p class="hint">Пока нет реакций.</p>`;
     return;
@@ -1632,199 +1619,28 @@ function renderReactions(){
   wrap.innerHTML = items.map(r=>{
     const c = state.characters.find(x=>x.id===r.charId);
     const p = state.posts.find(p=>p.id===r.postId);
-const d = `<span class="delta ${r.delta >= 0 ? 'pos' : 'neg'}">
-  ${formatDelta(r.delta)}
-</span>`;
-    const snippet = p ? clip(p.content, 80) : '';
+    const cls = r.delta >= 0 ? 'pos' : 'neg';
+
     return `
       <div class="react-card">
-        <div><strong>${c?.name}</strong> · <span class="muted">${fmtTime(r.at)}</span></div>
-        ${snippet ? `<div class="muted" style="margin:.2rem 0 .4rem;">Пост: «${snippet}»</div>` : ''}
+        <div>
+          <strong>${c?.name}</strong>
+          о посте <em>${authorName(p)}</em>
+          · <span class="muted">${fmtTime(r.at)}</span>
+        </div>
         <div class="react-item">
           <div>${r.text}</div>
-          <div>${d}</div>
+          <div class="delta ${cls}">${formatDelta(r.delta)}</div>
         </div>
       </div>
     `;
   }).join('');
 }
 
-
-// === ИИ для реакций, мыслей и названий отношений ===
-async function aiGenerateReactionText(char, post, delta, before, after, isStory){
-  try{
-    const me = currentPlayer();
-    const relationsSummary = buildRelationsSummary(char);
-    const mood =
-      delta > 0 ? 'улучшилось' :
-      delta < 0 ? 'ухудшилось' :
-      'почти не изменилось';
-
-    const prompt = `
-Ты придумываешь реакцию персонажа на пост игрока в ролевой соцсети.
-
-Персонаж: ${char.name} (${char.username})
-Биография (канон, опирайся на неё):
-${char.bio}
-
-Связи персонажа с другими:
-${relationsSummary}
-
-Игрок: ${me.name}.
-Отношение к игроку было ${before.toFixed(2)} из 100, стало ${after.toFixed(2)}.
-Оно ${mood} на ${delta.toFixed(2)} пункта.
-
-Тип поста: ${isStory ? 'сюжетный, важное событие' : 'обычный, бытовой эпизод'}.
-Текст поста:
-"""${clip(post.content, 400)}"""
-
-Напиши КОРОТКУЮ реакцию от третьего лица, которая:
-- показывает внутреннюю мотивацию и чувства персонажа по отношению к игроку;
-- может намекать, что персонаж собирается сделать (пригласить, оттолкнуть, проверить, помочь и т.п.);
-- звучит как запись наблюдателя: "Имя подумал/решил/вспомнил, что...".
-
-Формат:
-- 1–2 предложения, максимум 200 символов;
-- по-русски;
-- без смайликов и без процентов/цифр;
-- не обращайся напрямую к игроку ("ты"), описывай мысли и планы персонажа.
-
-Верни только текст реакции без пояснений.
-`;
-
-    const answer = await askAI(prompt);
-    if (!answer) return null;
-
-    const clean = answer.trim().toLowerCase();
-
-    // если модель опять начнёт "я не могу ответить" — игнорим
-    if (!clean ||
-        clean.includes('не могу нормально ответить') ||
-        clean.includes('не могу ответить')) {
-      return null;
-    }
-
-    return answer.trim();
-  }catch(e){
-    console.error('AI reaction error', e);
-    return null;
-  }
-}
-}
-
-async function aiGenerateRelationTitle(char, newApproval){
-  try{
-    const me = currentPlayer();
-    const relationsSummary = buildRelationsSummary(char);
-
-    const prompt = `
-Ты придумываешь поэтичные названия отношений между персонажем и игроком.
-
-Персонаж: ${char.name} (${char.username})
-Игрок: ${me.name}
-Уровень доверия к игроку сейчас: ${newApproval} из 100
-Биография персонажа:
-${char.bio}
-
-Связи персонажа с другими:
-${relationsSummary}
-
-Нужно придумать ОДНО короткое название их связи.
-Требования:
-- 2–7 слов
-- по-русски
-- без кавычек и точки в конце
-- можно образное/драматичное
-
-Примеры:
-- разорванные узы
-- отец и наследник, разрушивший его мечты
-- возлюбленные, скреплённые страстью
-`;
-    const answer = await askAI(prompt);
-    return (answer || '').split('\n')[0].trim();
-  }catch(e){
-    console.error('AI rel title err', e);
-    return '';
-  }
-}
-
-async function aiGenerateProfileThought(char){
-  try{
-    const me = currentPlayer();
-    const appr = char.approval?.[state.activePlayerId] ?? 50;
-    const relationsSummary = buildRelationsSummary(char);
-
-    const prompt = `
-Ты пишешь одну короткую мысль персонажа о игроке.
-
-Персонаж: ${char.name} (${char.username})
-Игрок: ${me.name}
-Текущее отношение к игроку: ${appr} из 100.
-Биография:
-${char.bio}
-
-Связи с другими персонажами:
-${relationsSummary}
-
-Напиши ОДНУ фразу-мысль персонажа о игроке, которая могла бы отображаться в профиле.
-Формат:
-- 1 короткое предложение
-- по-русски
-- без кавычек
-- максимум 140 символов.
-`;
-    const answer = await askAI(prompt);
-    return (answer || '').split('\n')[0].trim();
-  }catch(e){
-    console.error('AI profile thought err', e);
-    return '';
-  }
-}
-
-// ИИ решает, кто вообще будет реагировать
-async function aiPickReactingCharacters(post){
-  try{
-    const me = currentPlayer();
-    const chars = state.characters;
-
-    const summary = chars.map(c =>
-      `${c.id}: ${c.name} (${c.username}) — отношение к ${me.name}: ${c.approval?.[state.activePlayerId] ?? 50}/100`
-    ).join('\n');
-
-    const prompt = `
-У тебя есть список персонажей и пост игрока в соцсети.
-Твоя задача — выбрать, КТО из персонажей отреагирует на этот пост.
-
-Список персонажей:
-${summary}
-
-Пост игрока:
-"""${clip(post.content, 500)}"""
-
-Выбери нескольких (1–5) персонажей, которым это ближе всего по характеру, отношениям и контексту.
-ОТВЕТЬ ТОЛЬКО списком id персонажей через запятую.
-НЕ пиши ничего кроме id.
-
-Пример: "kristian, eve, derek"
-`;
-    const answer = await askAI(prompt);
-    if(!answer) return [];
-    const raw = answer.toLowerCase();
-    const ids = raw
-      .split(/[,;\s]+/)
-      .map(s => s.trim())
-      .filter(Boolean);
-    const validIds = ids.filter(id => chars.some(c => c.id === id));
-    return validIds;
-  }catch(e){
-    console.error('AI pick chars err', e);
-    return [];
-  }
-}
-
-
 // === генерация мыслей / ботов ===
+
+// базовые заготовки — используются как запасной вариант,
+// когда ИИ отвечает чем-то странным или слишком общим
 const thoughtPos = [
   'Интересный шаг. Мне нравится.',
   'Это звучит честно. Поддерживаю.',
@@ -1853,20 +1669,12 @@ function toneWrap(tone, text){
 
 function generateThought(char, post, delta){
   const base = delta>=0 ? choice(thoughtPos) : choice(thoughtNeg);
-  const mention = post.relatedCharacters.includes(char.id) ? ' (это касается меня)' : '';
+  const mention = post.relatedCharacters?.includes(char.id)
+    ? ' (это касается меня)'
+    : '';
   return toneWrap(char.tone, base) + mention;
 }
 
-function generateStoryIdeas(){
-  const who = 'кто-то важный';
-  return [
-    `Ночной разговор в пустом офисе: ${who} оказывается не тем, кем кажется.`,
-    `Запертые двери Академии и странная записка под порогом.`,
-    `Письмо, которое нельзя было отправлять: монолог от первого лица.`,
-    `Сцена признания, но не про любовь — про правду.`,
-    `Наблюдения за городом из окна: внутренний поток мыслей.`
-  ];
-}
 
 // === утилиты ===
 function authorName(p){
