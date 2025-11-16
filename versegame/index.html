@@ -1291,6 +1291,7 @@ function renderCharacterProfile(){
   const me = currentPlayer();
   const c = state.characters.find(x=>x.id===currentProfileCharId);
   if (!c) return;
+  const box = $('#characterView');
 
   const appr = (c.approval?.[state.activePlayerId] ?? 50);
 
