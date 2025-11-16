@@ -1525,9 +1525,9 @@ async function applyReactionsAndShowModal(post, isStory){
   } else {
     wrap.innerHTML = rxList.slice(0,5).map(rx=>{
       const c = state.characters.find(k=>k.id===rx.charId);
-      const d = rx.delta > 0
-        ? `<span class="delta pos">+${rx.delta}%</span>`
-        : `<span class="delta neg">${rx.delta}%</span>`;
+     const d = `<span class="delta ${rx.delta >= 0 ? 'pos' : 'neg'}">
+  ${formatDelta(rx.delta)}
+</span>`;
       return `<div class="react-item">
         <div><strong>${c?.name||'?'}</strong>: ${rx.text}</div>
         <div class="delta">${d}</div>
@@ -1540,43 +1540,47 @@ async function applyReactionsAndShowModal(post, isStory){
 
 // основная логика вычисления реакций с ИИ
 async function computeReactions(post, isStory){
-  // Сначала даём ИИ выбрать, кто вообще реагирует
-  const aiIds = await aiPickReactingCharacters(post);
-  let relevant;
-  if (aiIds && aiIds.length){
-    relevant = aiIds.map(id => state.characters.find(c=>c.id===id)).filter(Boolean);
-  } else {
-    // если ИИ не выбрал никого — fallback на старую логику
-    relevant = getRelevantCharacters(post);
-  }
-
+  const relevant = getRelevantCharacters(post);
   const out = [];
 
   for (const c of relevant){
-    const before = (c.approval[state.activePlayerId] ?? 50);
-    const bias = (before - 50) / 10;
-    const base = isStory ? 4 : 2;
-    let delta = Math.round(base + (Math.random()*4-2) + bias);
-    delta = clamp(delta, isStory ? -8 : -5, isStory ? 8 : 5);
+    const before = c.approval?.[state.activePlayerId] ?? 50;
+
+    // --- сколько СИЛЬНО задело персонажа ---
+    let impact = 0.25; // минимальное изменение
+
+    const isDirect = (post.relatedCharacters || []).includes(c.id);
+    if (isDirect) impact += 1.5;       // если пост явно про него
+    if (isStory)  impact += 1.0;       // сюжетка бьёт сильнее
+
+    const dist = Math.abs(before - 50) / 50; // 0..1 — чем дальше от нейтрала, тем сильнее реакция
+    impact += dist * 1.5;
+
+    impact += Math.random();           // чуть хаоса 0..1
+
+    // --- знак реакции (плюс / минус) ---
+    const bias   = (before - 50) / 50; // -1..1: любит / ненавидит игрока
+    let probPos  = 0.5 + bias * 0.35;  // чем лучше отношение, тем выше шанс плюса
+    probPos      = clamp(probPos, 0.15, 0.85);
+
+    const isPositive = Math.random() < probPos;
+    let delta = impact * (isPositive ? 1 : -1);
+
+    // верхняя граница по модулю
+    const max = (isStory || isDirect) ? 6 : 3;
+    delta = clamp(delta, -max, max);
 
     const after = clamp(before + delta, 0, 100);
-    c.approval[state.activePlayerId] = after;
 
-    // 1-й слой: текст реакции на пост
+    // --- текст реакции через ИИ + фоллбэк ---
     let text = await aiGenerateReactionText(c, post, delta, before, after, isStory);
-    if (!text){
-      text = generateThought(c, post, delta); // запасной рандомный текст
+    if (!text) {
+      text = generateThought(c, post, delta); // если ИИ молчит — старый рандомный генератор
     }
-    c.lastThought = text;
 
-    // 3-й слой: поэтичное название отношений
-    if (Math.abs(delta) >= 3 || after <= 30 || after >= 70){
-      const title = await aiGenerateRelationTitle(c, after);
-      if (title){
-        if (!c.relationTitles) c.relationTitles = {};
-        c.relationTitles[state.activePlayerId] = title;
-      }
-    }
+    // сохраняем состояние
+    c.approval[state.activePlayerId] = after;
+    c.lastThought = text;
 
     const rx = reactionObj(post.id, c.id, text, delta);
     state.reactions.push(rx);
@@ -1628,7 +1632,9 @@ function renderReactions(){
   wrap.innerHTML = items.map(r=>{
     const c = state.characters.find(x=>x.id===r.charId);
     const p = state.posts.find(p=>p.id===r.postId);
-    const d = r.delta > 0 ? `<span class="delta pos">+${r.delta}%</span>` : `<span class="delta neg">${r.delta}%</span>`;
+const d = `<span class="delta ${r.delta >= 0 ? 'pos' : 'neg'}">
+  ${formatDelta(r.delta)}
+</span>`;
     const snippet = p ? clip(p.content, 80) : '';
     return `
       <div class="react-card">
@@ -1649,41 +1655,61 @@ async function aiGenerateReactionText(char, post, delta, before, after, isStory)
   try{
     const me = currentPlayer();
     const relationsSummary = buildRelationsSummary(char);
+    const mood =
+      delta > 0 ? 'улучшилось' :
+      delta < 0 ? 'ухудшилось' :
+      'почти не изменилось';
 
     const prompt = `
-Ты придумываешь короткие реакции персонажей на пост в вымышленной соцсети.
+Ты придумываешь реакцию персонажа на пост игрока в ролевой соцсети.
 
 Персонаж: ${char.name} (${char.username})
-Биография:
+Биография (канон, опирайся на неё):
 ${char.bio}
 
 Связи персонажа с другими:
 ${relationsSummary}
 
-Отношение к игроку ${me.name} изменилось с ${before} до ${after} (дельта: ${delta > 0 ? '+'+delta : delta} пунктов).
-Тип поста: ${isStory ? 'сюжетный, важное событие' : 'обычный, бытовой'}.
-Текст поста игрока:
+Игрок: ${me.name}.
+Отношение к игроку было ${before.toFixed(2)} из 100, стало ${after.toFixed(2)}.
+Оно ${mood} на ${delta.toFixed(2)} пункта.
+
+Тип поста: ${isStory ? 'сюжетный, важное событие' : 'обычный, бытовой эпизод'}.
+Текст поста:
 """${clip(post.content, 400)}"""
 
-Напиши ОДНУ короткую реакцию в стиле комментария-наблюдения от третьего лица.
-Формат:
-- максимум 120 символов
-- по-русски
-- без процентов, без цифр и смайлов
-- без кавычек в начале и конце
-- можно обращаться к игроку на "ты", но не обязательно.
+Напиши КОРОТКУЮ реакцию от третьего лица, которая:
+- показывает внутреннюю мотивацию и чувства персонажа по отношению к игроку;
+- может намекать, что персонаж собирается сделать (пригласить, оттолкнуть, проверить, помочь и т.п.);
+- звучит как запись наблюдателя: "Имя подумал/решил/вспомнил, что...".
 
-Примеры стиля:
-- Твоя тётя молча поддержала, как всегда.
-- Стыд и любовь в одной дымке.
-- Спас Веронику, но Ева всё равно тебя подколола.
+Формат:
+- 1–2 предложения, максимум 200 символов;
+- по-русски;
+- без смайликов и без процентов/цифр;
+- не обращайся напрямую к игроку ("ты"), описывай мысли и планы персонажа.
+
+Верни только текст реакции без пояснений.
 `;
+
     const answer = await askAI(prompt);
-    return (answer || '').split('\n')[0].trim() || 'Он(а) отреагировал(а) по-своему.';
+    if (!answer) return null;
+
+    const clean = answer.trim().toLowerCase();
+
+    // если модель опять начнёт "я не могу ответить" — игнорим
+    if (!clean ||
+        clean.includes('не могу нормально ответить') ||
+        clean.includes('не могу ответить')) {
+      return null;
+    }
+
+    return answer.trim();
   }catch(e){
-    console.error('AI reaction err', e);
-    return 'Он(а) отреагировал(а) по-своему.';
+    console.error('AI reaction error', e);
+    return null;
   }
+}
 }
 
 async function aiGenerateRelationTitle(char, newApproval){
@@ -1863,6 +1889,12 @@ function setupFilters(){
     });
   });
 }
+
+function formatDelta(delta){
+  const sign = delta > 0 ? '+' : '';
+  return sign + delta.toFixed(2) + '%';
+}
+
 
 function setupPlayers(){
   const sel = $('#activePlayerSelect');
