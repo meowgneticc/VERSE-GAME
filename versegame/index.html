@@ -675,6 +675,14 @@ const fmtTime = (iso) => new Date(iso).toLocaleString();
 const randint = (a,b)=>Math.floor(Math.random()*(b-a+1))+a;
 const choice = (arr)=>arr[Math.floor(Math.random()*arr.length)];
 const clamp=(x,min,max)=>Math.max(min,Math.min(max,x));
+function relationLabelFromValue(v) {
+  if (v >= 85) return 'очень сильная, почти неразрывная связь';
+  if (v >= 70) return 'тёплые, доверительные отношения';
+  if (v >= 55) return 'ровные, спокойные отношения';
+  if (v >= 40) return 'натянутая, хрупкая связь';
+  if (v >= 20) return 'почти разрушенная связь';
+  return 'разорванные узы';
+}
   // Собираем краткое описание связей персонажа с другими
 function buildRelationsSummary(char) {
   if (!char.relations) return 'Нет явных связей.';
@@ -1126,8 +1134,10 @@ function renderRelations(){
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:.4rem;">
           <div class="muted">Уровень: ${appr}%</div>
           <div class="rel-actions">
-            <button class="secondary">ЛС</button>
-          </div>
+  <button class="secondary" onclick="event.stopPropagation(); openDm('${c.id}')">
+    ЛС
+  </button>
+</div>
         </div>
         <div class="rel-thought">Мысль: ${thought}</div>
       </div>
@@ -1303,16 +1313,6 @@ function setupDm(){
     }
   };
 } // ← вот этой скобки и не хватало
-
-// эту функцию можно вообще удалить, если она больше не нужна,
-// но если хочешь оставить — пусть будет отдельной
-function botReplyLater(charId, playerText){
-  const char = state.characters.find(c=>c.id===charId);
-  const reply = generateBotReply(char, playerText);
-  setTimeout(()=>{ pushMessage(charId, charId, reply); }, randint(1200, 2400));
-}
-
-
  
 
 function botReplyLater(charId, playerText){
