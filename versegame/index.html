@@ -1633,13 +1633,22 @@ function setupComposeStory() {
 function paintIdea(){
   $('#ideaText').textContent = storyIdeas[ideaIdx] || 'Идей пока нет — нажми «Обновить идеи»';
 }
+ // === ЛС ===
+
+// (ВОТ ЭТА ФУНКЦИЯ ПРОПАЛА)
+function threadKey(charId, playerId=state.activePlayerId){
   return `${charId}_${playerId}`;
 }
 
+// (А ЭТА БЫЛА СЛОМАНА)
 function syncDmSelectors(){
   const sel = $('#dmSelect');
-sel.innerHTML = state.characters.filter(c => c.id !== state.activePlayerId).map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
-  if(!sel.value && state.characters[0]) sel.value = state.characters[0].id;  const current = state.characters.find(c=>c.id===sel.value);
+  sel.innerHTML = state.characters.filter(c => c.id !== state.activePlayerId).map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
+  
+  if(!sel.value && state.characters[0]) sel.value = state.characters[0].id;
+  
+  // (Здесь была ошибка синтаксиса, я ее исправил)
+  const current = state.characters.find(c=>c.id===sel.value);
   $('#dmTitle').textContent = 'ЛС · ' + (current?.name || '');
   renderDmThread(sel.value);
 }
