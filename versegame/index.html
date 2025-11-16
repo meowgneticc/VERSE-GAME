@@ -1831,14 +1831,16 @@ function syncDmSelectors(){
 
 function openDm(charId){
   setActiveView('dm');
+
   // Убедимся, что персонаж есть в списке, прежде чем выбирать
-const opt = document.querySelector(`#dmSelect option[value="${charId}"]`);
-if (opt) $('#dmSelect').value = charId;
-  }
+  const opt = document.querySelector(`#dmSelect option[value="${charId}"]`);
+  if (opt) $('#dmSelect').value = charId;
+
   const c = state.characters.find(x=>x.id===charId);
   $('#dmTitle').textContent = 'ЛС · ' + (c?.name || '');
   renderDmThread(charId);
 }
+
 
 function renderDmThread(charId){
   const key = threadKey(charId);
@@ -1928,11 +1930,6 @@ ${relationsSummary}
 // ... (Остальные функции AI: aiGenerateProfileThought, worldSnapshot, aiGenerateAmbientCharacterTweet, 
 // aiGenerateNpcWorldTweet, fallbackNpcTweet, aiGenerateOutletPost, fallbackOutletTweet, aiGenerateNpcPost)
 
-
-// Эта функция запускает «вдогонку» генерацию постов
-async function triggerNpcPostGeneration(playerPost) {
-  // ... (Логика фоновой генерации постов)
-}
 
 function worldSnapshot(limit = 8) {
   const recent = state.posts.slice().sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).slice(0, limit);
@@ -2327,9 +2324,6 @@ function setupMyProfileButton() {
 const AMBIENT_MIN_MS = 45000;   // минимум 45 секунд
 const AMBIENT_MAX_MS = 120000;  // максимум 120 секунд
 
-async function ambientPostsTick(){
-  // ... (Логика фоновых постов - зависит от AI)
-}
 
 function scheduleAmbientPosting(){
   const ms = randint(AMBIENT_MIN_MS, AMBIENT_MAX_MS);
