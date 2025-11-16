@@ -1291,6 +1291,7 @@ function renderCharacterProfile(){
   const me = currentPlayer();
   const c = state.characters.find(x=>x.id===currentProfileCharId);
   if (!c) return;
+  const box = $('#characterView');
 
   const appr = (c.approval?.[state.activePlayerId] ?? 50);
 
@@ -1523,6 +1524,8 @@ function setupComposeSocial(){
 
     save();
     renderFeed();
+    // Запускаем генерацию NPC-постов в "фоновом режиме"
+    triggerNpcPostGeneration(p);
     setActiveView('feed');
   };
 } // <--- УБЕДИСЬ, ЧТО ЗДЕСЬ НЕТ ЛИШНЕЙ } СКОБКИ
@@ -1599,6 +1602,8 @@ function setupComposeStory() {
 
     save();
     renderFeed();
+    // Запускаем генерацию NPC-постов в "фоновом режиме"
+    triggerNpcPostGeneration(p);
     setActiveView('feed');
   };
 }
@@ -1798,6 +1803,118 @@ ${relationsSummary}
   return cleaned;
 }
 
+// (вставь это перед 'async function aiGenerateProfileThought(char)')
+
+// Генерация ПУБЛИЧНОГО поста (твита) от лица NPC
+async function aiGenerateNpcPost(char, player, playerPost) {
+  const relationsSummary = buildRelationsSummary(char);
+  const shortPlayerPost = clip(playerPost.content, 150);
+  
+  // КЛЮЧЕВОЙ МОМЕНТ:
+  // Мы берем "секретную мысль" персонажа, которую только что сгенерировали
+  // для модального окна, и используем ее как основу для публичного поста.
+  const privateThought = char.lastThought; 
+
+  const prompt = `
+Ты — персонаж ${char.name} (${char.username}) из семейной саги.
+Твоя биография и канон:
+${char.bio}
+
+Твои связи с другими:
+${relationsSummary}
+
+Только что, игрок ${player.name} (${player.username}) опубликовал пост:
+"""${shortPlayerPost}"""
+
+Твоя НЕМЕДЛЕННАЯ, ПЕРВАЯ, СЕКРЕТНАЯ мысль об этом посте была:
+"""${privateThought}"""
+
+ЗАДАЧА:
+Основываясь на своей личности, каноне И этой своей секретной мысли, напиши короткий, публичный "твит" (пост в соцсеть) от своего имени.
+Это может быть прямая реакция на пост ${player.name} или просто мысль "по мотивам" ("Некоторые люди никогда не меняются...").
+
+ТРЕБОВАНИЯ:
+1.  **Это ПУБЛИЧНЫЙ пост.** Он должен быть в твоём стиле (${char.tone}).
+2.  **Формат:** Коротко (1-3 предложения), по-русски, от первого лица (от ${char.name}).
+3.  **НИКАКИХ** хэштегов, смайликов (если это не в стиле ${char.tone}), или обращений к "серверу" / "ИИ".
+4.  **ВАЖНО:** Если твоя "секретная мысль" ("${privateThought}") была нейтральной или скучной, или если тебе нечего сказать публично — просто верни ПУСТУЮ СТРОКУ.
+
+Ответь ТОЛЬКО текстом твита, или пустой строкой.
+`.trim();
+
+  const aiText = await askAI(prompt);
+  if (!aiText) return null; // Ошибка ИИ
+
+  // Убираем лишние кавычки, которые ИИ любит добавлять
+  const cleaned = aiText.replace(/^"|"$/g, '').trim(); 
+
+  // Фильтруем "ответы-заглушки" от ИИ
+  const lower = cleaned.toLowerCase();
+  const badPhrases = [
+    'не могу', 'сервер', 'ошибка', 'я не знаю', 'как ии', 'как персонаж',
+    'твит:', 'пост:', 'я напишу:', 'хорошо, вот', 'пустая строка'
+  ];
+  
+  // Если ответ слишком короткий или содержит "плохие" фразы, считаем, что NPC решил промолчать
+  if (!cleaned || cleaned.length < 10 || badPhrases.some(p => lower.includes(p))) {
+    return null; 
+  }
+
+  return cleaned;
+}
+
+// Эта функция запускает "вдогонку" генерацию постов от NPC
+async function triggerNpcPostGeneration(playerPost) {
+  // Находим персонажей, которые могут отреагировать (все, кроме автора)
+  const charactersToReact = getRelevantCharacters(playerPost);
+  const player = state.players.find(p => p.id === playerPost.authorId);
+  let newPostsGenerated = false;
+
+  console.log(`Запускаем генерацию NPC-постов в ответ на пост ${player.name}...`);
+
+  for (const char of charactersToReact) {
+    // Определяем, сколько постов напишет персонаж (0, 1 или 2)
+    let postCount = 0;
+    const roll = Math.random();
+    
+    if (roll > 0.95) {      // 5% шанс на 2 поста
+      postCount = 2;
+    } else if (roll > 0.6) { // 35% шанс на 1 пост
+      postCount = 1;         // (60% шанс на 0 постов)
+    }
+
+    for (let i = 0; i < postCount; i++) {
+      // Просим ИИ сгенерировать текст твита
+      const postContent = await aiGenerateNpcPost(char, player, playerPost);
+      
+      if (postContent) {
+        // Если ИИ вернул текст (а не null), создаем новый пост
+        const p = postObj({
+          type: 'social', // NPC пишут только "твиты"
+          authorType: 'character',
+          authorId: char.id,
+          content: postContent,
+          relatedCharacters: [playerPost.authorId] // Пост связан с игроком
+        });
+        
+        state.posts.push(p);
+        newPostsGenerated = true;
+        console.log(`${char.name} опубликовал пост: "${postContent}"`);
+      }
+    }
+  }
+
+  // Если хотя бы один новый пост был создан...
+  if (newPostsGenerated) {
+    console.log('NPC закончили постить, обновляем ленту.');
+    save(); // Сохраняем все новые посты
+    
+    // Перерисовываем ленту, только если пользователь сейчас на ней
+    if ($('#view-feed').classList.contains('active')) {
+      renderFeed();
+    }
+  }
+}
 
 // === реакции ===
 let lastReactionPostId = null;
