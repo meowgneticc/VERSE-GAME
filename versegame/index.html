@@ -1386,33 +1386,6 @@ function setupComposeSocial(){
     renderFeed();
     setActiveView('feed');
   };
-}
-
-  if(!content){
-    alert('Напиши текст поста');
-    return;
-  }
-
-  const p = postObj({
-    type:'social',
-    authorType:'player',
-    authorId:state.activePlayerId,
-    content,
-    relatedCharacters: [],
-    photoData
-  });
-
-  state.posts.push(p);
-  await applyReactionsAndShowModal(p, false);
-
-  $('#composeText').value = '';
-  $('#composePhoto').value = '';
-  $('#composePhotoPreview').innerHTML = '';
-
-  save();
-  renderFeed();
-  setActiveView('feed');
-};
 
 }
 
