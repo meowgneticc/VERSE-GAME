@@ -619,9 +619,12 @@
 <body>
   <div id="app">
     <!-- Top bar -->
-    <header class="topbar">
+<header class="topbar">
       <div class="brand">Verse</div>
       <div class="player-switch">
+        <button id="myProfileBtn" class="secondary" style="padding:.25rem .7rem; margin-right:.5rem;">
+          Мой профиль
+        </button>
         <label>
           Я — 
           <select id="activePlayerSelect"></select>
@@ -1289,7 +1292,6 @@ function renderCharacterProfile(){
   const c = state.characters.find(x=>x.id===currentProfileCharId);
   if (!c) return;
 
-  const box = document.getElementById('characterView');
   const appr = (c.approval?.[state.activePlayerId] ?? 50);
 
   // 3-й слой: название отношений
@@ -1313,16 +1315,42 @@ function renderCharacterProfile(){
         placeholder="Подробное описание персонажа, его характер, травмы, отношения, триггеры и т.п.">${bio}</textarea>`
     : '';
 
+  // === ИЗМЕНЕНИЕ 1: Проверяем, наш ли это профиль ===
+  const isOwnProfile = (c.id === state.activePlayerId);
+  
+  // === ИЗМЕНЕНИЕ 2: Прячем блок отношений, если профиль наш ===
+  let relationBlockHtml = '';
+  if (!isOwnProfile) {
+    relationBlockHtml = `
+    <div class="char-rel-block">
+      <div class="char-rel-label-row">
+        <span>Связь с ${me.name}</span>
+        <span><strong>${Math.round(appr)}%</strong></span>
+      </div>
+      <div class="char-rel-bar">
+        <span style="width:${clamp(appr,0,100)}%"></span>
+      </div>
+      <div class="char-rel-title">
+        ${relTitle}
+      </div>
+      <div class="char-rel-thought">
+        ${profileThought || 'Пока персонаж молчит и просто наблюдает за тобой.'}
+      </div>
+    </div>
+    `;
+  }
+
+  // === ИЗМЕНЕНИЕ 3: Прячем кнопку "ЛС", если профиль наш ===
   const actions = isEditingBio
     ? `
       <button class="primary" onclick="saveCharacterBio()">Сохранить описание</button>
       <button class="secondary" onclick="cancelEditBio()">Отмена</button>
-      <button class="ghost" onclick="openDm('${c.id}')">Перейти в ЛС</button>
+      ${!isOwnProfile ? `<button class="ghost" onclick="openDm('${c.id}')">Перейти в ЛС</button>` : ''}
       <button class="ghost" onclick="setActiveView('relations')">Назад к списку</button>
     `
     : `
       <button class="secondary" onclick="startEditBio()">Редактировать описание</button>
-      <button class="secondary" onclick="openDm('${c.id}')">Перейти в ЛС</button>
+      ${!isOwnProfile ? `<button class="secondary" onclick="openDm('${c.id}')">Перейти в ЛС</button>` : ''}
       <button class="ghost" onclick="setActiveView('relations')">Назад к списку</button>
     `;
 
@@ -1348,24 +1376,8 @@ function renderCharacterProfile(){
       </div>
 
       ${editBlock}
-
-      <div class="char-rel-block">
-        <div class="char-rel-label-row">
-          <span>Связь с ${me.name}</span>
-          <span><strong>${Math.round(appr)}%</strong></span>
-        </div>
-        <div class="char-rel-bar">
-          <span style="width:${clamp(appr,0,100)}%"></span>
-        </div>
-        <div class="char-rel-title">
-          ${relTitle}
-        </div>
-        <div class="char-rel-thought">
-          ${profileThought || 'Пока персонаж молчит и просто наблюдает за тобой.'}
-        </div>
-      </div>
-
-      <div class="char-actions-row">
+      
+      ${relationBlockHtml} <div class="char-actions-row">
         ${actions}
       </div>
 
@@ -2008,6 +2020,13 @@ function setupModal(){
   $('#openReactionsBtn').onclick = ()=>{ mdl.classList.add('hidden'); setActiveView('reactions'); };
 }
 
+function setupMyProfileButton() {
+  $('#myProfileBtn').onclick = () => {
+    // Просто открываем профиль с ID текущего игрока
+    openCharacterProfile(state.activePlayerId);
+  };
+}
+
 // === старт приложения ===
 document.addEventListener('DOMContentLoaded', ()=>{
   load();
@@ -2018,6 +2037,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   setupComposeStory();
   setupDm();
   setupModal();
+  setupMyProfileButton();
   renderFeed();
   renderRelations();
 });
