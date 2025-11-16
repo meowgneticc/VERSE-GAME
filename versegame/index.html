@@ -798,171 +798,28 @@ function buildRelationsSummary(char) {
   return lines.join('\n');
 }
 
-// === ИИ (универсальный) ===
-async function askAI(promptText, {timeoutMs = 20000} = {}) {
-  const ctrl = new AbortController();
-  const to = setTimeout(() => ctrl.abort(), timeoutMs);
-
+// === ИИ (Gemini) для ЛС ===
+async function askAI(promptText) {
   try {
     const res = await fetch('/api/gemini', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: promptText }),
-      signal: ctrl.signal
+      body: JSON.stringify({ text: promptText })
     });
 
-    if (!res.ok) {
-      console.error('AI HTTP error', res.status, res.statusText);
-      return null;
+    const data = await res.json();
+
+    // если ответ пустой или с ошибкой — считаем, что ИИ не сработал
+    if (!data.ok || !data.answer) {
+      console.error('AI error response', data);
+      return null;              // <— ВАЖНО: возвращаем null, а не текст
     }
 
-    const ct = res.headers.get('content-type') || '';
-    const payload = ct.includes('application/json') ? await res.json() : await res.text();
-
-    const pick = (d) => {
-      if (!d) return null;
-      if (typeof d === 'string') return d;
-      if (typeof d.answer === 'string') return d.answer;
-      if (typeof d.text === 'string') return d.text;
-      if (typeof d.output === 'string') return d.output;
-
-      if (Array.isArray(d.choices)) {
-        const ch = d.choices[0];
-        const t1 = ch?.message?.content ?? ch?.text;
-        if (typeof t1 === 'string') return t1;
-      }
-
-      if (Array.isArray(d.candidates)) {
-        const cand = d.candidates[0];
-        const parts = cand?.content?.parts || [];
-        const textPart = parts.find(p => typeof p.text === 'string');
-        if (textPart?.text) return textPart.text;
-      }
-
-      if (typeof d.content === 'string') return d.content;
-      if (typeof d.result === 'string') return d.result;
-
-      return null;
-    };
-
-    const raw = pick(payload);
-    if (!raw) {
-      console.error('AI: cannot extract text from payload', payload);
-      return null;
-    }
-
-    const cleaned = String(raw).trim();
-    return cleaned || null;
-
+    return data.answer.trim();
   } catch (err) {
-    console.error('AI network/timeout error', err);
-    return null;
-  } finally {
-    clearTimeout(to);
+    console.error('AI network error', err);
+    return null;                // <— и тут тоже null
   }
-}
-
-
-// === ВЫБОР, КТО БУДЕТ РЕАГИРОВАТЬ (1–5 персонажей) ===
-
-// Делаем удобный список персонажей для ИИ
-function castForAI() {
-  return state.characters
-    .filter(c => c.id !== state.activePlayerId) // не берём текущего игрока
-    .map(c => ({
-      id: c.id,
-      name: c.name,
-      username: c.username,
-      tone: c.tone,
-      approval: c.approval?.[state.activePlayerId] ?? 50,
-      relations: c.relations || {}
-    }));
-}
-
-// Аккуратно достаём JSON из ответа ИИ
-function parseJsonFromAi(s) {
-  try {
-    const cleaned = s.trim().replace(/```json|```/g, '');
-    return JSON.parse(cleaned);
-  } catch {
-    return null;
-  }
-}
-
-// Просим ИИ: выбери 1–5 персонажей и (по желанию) дельту реакции
-async function aiPickReactors(post, limit = 5) {
-  const me = currentPlayer();
-  const cast = castForAI();
-
-  const prompt = `
-Ты выбираешь, кто из персонажей должен отреагировать на пост игрока.
-Дай от 1 до ${limit} человек. Учитывай:
-- связаны ли они с темой поста,
-- их связи/аппрувал к игроку,
-- массив post.relatedCharacters (те, кого явно затронули).
-
-Верни ТОЛЬКО JSON без пояснений:
-{"reactors":[{"id":"<charId>","why":"краткая причина","delta":-1.25}]}
-
-delta: число от -5 до 5 с шагом 0.25 (знак — тон реакции).
-
-Входные данные:
-Игрок: ${me.name} (${me.username})
-Пост: """${clip(post.content, 600)}"""
-post.relatedCharacters: [${(post.relatedCharacters || []).join(', ')}]
-Персонажи: ${JSON.stringify(cast)}
-`.trim();
-
-  const answer = await askAI(prompt);
-  const data = answer && parseJsonFromAi(answer);
-  if (!data || !Array.isArray(data.reactors)) return null;
-
-  const seen = new Set();
-
-  return data.reactors
-    .filter(r =>
-      r &&
-      typeof r.id === 'string' &&
-      !seen.has(r.id) &&
-      state.characters.some(x => x.id === r.id)
-    )
-    .slice(0, limit)
-    .map(r => {
-      seen.add(r.id);
-      return {
-        id: r.id,
-        why: r.why || '',
-        delta:
-          typeof r.delta === 'number'
-            ? clamp(Math.round(r.delta * 4) / 4, -5, 5)
-            : null
-      };
-    });
-}
-
-// Запасной вариант, если ИИ сломался и не выбрал никого
-function getHeuristicReactors(post, limit = 5) {
-  const idsFromPost = (post.relatedCharacters || [])
-    .filter(id => state.characters.some(c => c.id === id));
-
-  const others = state.characters
-    .filter(
-      c =>
-        c.id !== post.authorId &&
-        c.id !== state.activePlayerId &&
-        !idsFromPost.includes(c.id)
-    )
-    .sort((a, b) =>
-      Math.abs((b.approval[state.activePlayerId] ?? 50) - 50) -
-      Math.abs((a.approval[state.activePlayerId] ?? 50) - 50)
-    );
-
-  const orderedIds = [
-    ...idsFromPost,
-    ...others.map(c => c.id)
-  ];
-
-  return orderedIds.slice(0, limit);
 }
 
 
@@ -1025,8 +882,23 @@ let state = {
   characters: [],
   posts: [],
   dms: {},
-  reactions: []
+  reactions: [],
+  npcs: [],        // жители (обычные пользователи ленты)
+  outlets: [],     // медиа
+  world: {         // интересы мира
+    topics: ['horses','music','university','nightlife','family','gossip','sports','tech','citylife']
+  }
 };
+
+// ВНЕ state (отдельно!)
+function migrateStateSchema(){
+  if(!state.npcs)       state.npcs = [];
+  if(!state.outlets)    state.outlets = [];
+  if(!state.world)      state.world = { topics:['horses','music','university','nightlife','family','gossip','sports','tech','citylife'] };
+  if(!state.dms)        state.dms = {};
+  if(!state.reactions)  state.reactions = [];
+}
+
 
 const LS_KEY = 'verse_state_v2_grayson_loran';
 
@@ -1275,14 +1147,93 @@ function seedIfEmpty(){
 function save(){
   try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }catch(e){}
 }
+
 function load(){
   try{
     const raw = localStorage.getItem(LS_KEY);
     if(raw) state = JSON.parse(raw);
   }catch(e){}
+
+  // приводим схему к актуальной
+  migrateStateSchema();
+
+  // создаём персонажей/стартовые посты, если пусто
   seedIfEmpty();
+
+  function seedWorldAccounts(){
+  if (state.npcs.length || state.outlets.length) return;
+
+  const tones = ['warm','stoic','sharp','chaotic'];
+  const topics = state.world.topics;
+
+  const handleBits = {
+    horses: ['horseslover','hoofbeats','stableaddict','ride4life','cavalier','coltwatch'],
+    music:  ['ashfan','riffhunter','vinylcity','gigguide','ampjunkie'],
+    family: ['familyfirst','blademorewatch','homevibes','parenttalk'],
+    gossip: ['CityRumors','TeaSpill','SpiceWire','WhisperLane','DailyDust'],
+    nightlife:['afterdark','clubtrail','midnightowl','citylights'],
+    university:['campusbee','studyflow','libratalk'],
+    sports:  ['varsitywatch','balltalk','arenaecho'],
+    tech:    ['techpulse','devglance','codetips'],
+    citylife:['urbansight','streetnotes','townsquare']
+  };
+
+  function makeHandle(topic){
+    const pool = handleBits[topic] || ['feedline','localvoice','randomuser'];
+    const base = choice(pool);
+    const suffix = Math.random()<0.5 ? '' : Math.floor(10+Math.random()*89);
+    return '@' + (base + suffix);
+  }
+
+  function makeName(){
+    const first = ['Саша','Кира','Макс','Аня','Денис','Лия','Игорь','Ника','Ян','Мила','Тимур','Рита','Федя','Юля','Гоша'];
+    const last  = ['Ильин','Савина','Туманова','Лебедев','Громова','Волков','Мельник','Котова','Руднев','Смирнова','Назаров'];
+    return `${choice(first)} ${choice(last)}`;
+  }
+
+  // 28–36 обычных NPC
+  const npcCount = randint(28,36);
+  for (let i=0;i<npcCount;i++){
+    const t = choice(topics);
+    state.npcs.push({
+      id: uid('npc'),
+      name: '',
+      username: makeHandle(t),
+      tone: choice(tones),
+      topic: t,
+      bio: `Обычный житель города, интересуется: ${t}.`
+    });
+  }
+
+  // СМИ: новости + таблоиды
+  const outlets = [
+    { name:'Город Сегодня',   topic:'citylife', type:'news'   },
+    { name:'Кантер-Таун News',topic:'citylife', type:'news'   },
+    { name:'Светская Лупа',   topic:'gossip',   type:'tabloid'},
+    { name:'Daily Dust',      topic:'gossip',   type:'tabloid'}
+  ];
+
+  state.outlets = outlets.map(o=>({
+    id: uid('outlet'),
+    name: o.name,
+    username: makeHandle(o.topic),
+    tone: o.type==='news' ? 'stoic' : 'sharp',
+    outletType: o.type,
+    topic: o.topic,
+    bio: o.type==='news'
+      ? 'Местные новости, коротко и по делу.'
+      : 'Громкие заголовки, слухи и сплетни.'
+  }));
+}
+
+
+  // создаём NPC и медиа, если их ещё нет
+  seedWorldAccounts();
+
   save();
 }
+
+
 
 // === модели постов / реакций ===
 function postObj({type, authorType, authorId, content, relatedCharacters=[], photoData=null}){
@@ -1337,14 +1288,32 @@ function renderFeed(){
   });
 }
 
-function renderPostHtml(p){
-  const author = p.authorType==='player'
-    ? state.players.find(pl=>pl.id===p.authorId)
-    : state.characters.find(c=>c.id===p.authorId);
 
-  const name = author?.name ?? 'Неизвестно';
-  const username = author?.username ?? '@user';
-  const badge = p.type==='story' ? `<span class="badge">Сюжет</span>` : '';
+function getAuthorByType(authorType, id){
+  if (authorType==='player')    return state.players.find(x=>x.id===id);
+  if (authorType==='character') return state.characters.find(x=>x.id===id);
+  if (authorType==='npc')       return state.npcs.find(x=>x.id===id);
+  if (authorType==='outlet')    return state.outlets.find(x=>x.id===id);
+  return null;
+}
+
+function renderPostHtml(p){
+  const author = getAuthorByType(p.authorType, p.authorId);
+  const rawName = author?.name ?? 'Неизвестно';
+  const rawUsername = author?.username ?? '@user';
+
+  const isMedia = p.authorType==='outlet';
+  const isNpc   = p.authorType==='npc';
+
+  // у жителей показываем только @ник
+  const name = isNpc ? rawUsername : rawName;
+  const username = isNpc ? '' : rawUsername;
+
+  const badge = p.type==='story' ? `<span class="badge">Сюжет</span>`
+              : isMedia           ? `<span class="badge">Медиа</span>`
+              : isNpc             ? `<span class="badge">Житель</span>`
+              : '';
+
   const photo = p.photoData ? `<div class="photo-preview"><img src="${p.photoData}" alt=""></div>` : '';
 
   const commentsRow = (p.type==='social')
@@ -1365,7 +1334,7 @@ function renderPostHtml(p){
         <div class="avatar" aria-hidden="true"></div>
         <div class="meta">
           <div class="name">${name} ${badge}</div>
-          <div class="username">${username}</div>
+          ${username ? `<div class="username">${username}</div>` : ''}
         </div>
       </div>
       <div class="post-content">${p.type==='story'
@@ -1377,6 +1346,8 @@ function renderPostHtml(p){
     </li>
   `;
 }
+
+
 
 function addQuickComment(postId){
   const p = state.posts.find(p=>p.id===postId);
@@ -1408,6 +1379,33 @@ function openCharacterProfile(charId){
   setActiveView('character');
   // попросим ИИ сформулировать актуальную мысль
   updateProfileThoughtWithAI(charId);
+}
+
+async function aiGenerateRelationTitle(char, player, approvalNow, lastDelta){
+  const prompt = `
+Ты придумываешь ёмкие, дерзкие названия отношений между двумя вымышленными персонажами.
+Дай ОДНУ фразу (3–7 слов) по-русски, без кавычек, без точек в конце.
+
+Контекст:
+- Персонаж A: ${char.name}
+- Персонаж B: ${player.name}
+- Текущее сближение (0–100): ${Math.round(approvalNow)}
+- Последняя динамика (дельта): ${lastDelta > 0 ? '+'+lastDelta : lastDelta}
+
+Примеры стиля:
+- бывшие возлюбленные с шансом на воссоединение
+- лучшие друзья до конца жизни
+- сексуальные партнёры с надеждой на большее
+- союзники по необходимости, но не по сердцу
+
+Верни только сам заголовок.`;
+  const txt = await askAI(prompt);
+  const cleaned = (txt||'').replace(/[«»"]/g,'').trim();
+  if (!cleaned) {
+    // запасной вариант — по шкале
+    return relationLabelFromValue(approvalNow);
+  }
+  return cleaned;
 }
 
 async function updateProfileThoughtWithAI(charId){
@@ -1671,7 +1669,6 @@ function setupComposeSocial(){
     triggerNpcPostGeneration(p);
     setActiveView('feed');
   };
-} // <--- УБЕДИСЬ, ЧТО ЗДЕСЬ НЕТ ЛИШНЕЙ } СКОБКИ
 
 // === сюжетный пост ===
 
@@ -1863,11 +1860,16 @@ ${relationsSummary}
 Помни, кто такой ${char.name}, и как он относится к игроку ${player.name}.
   `.trim();
 
-    const aiText = await askAI(prompt);
-  if (!aiText) return null;
+  const aiText = await askAI(prompt);
 
-  const cleaned = aiText.replace(/\s+/g, ' ').trim().replace(/^"|"$/g,'');
+  // если ИИ не ответил или ответ странный —fallback
+  if (!aiText) {
+    return generateThought(char, post, delta);
+  }
+
+  const cleaned = aiText.replace(/\s+/g, ' ').trim();
   const lower = cleaned.toLowerCase();
+
   const badPhrases = [
     'не могу нормально ответить',
     'не могу сейчас нормально ответить',
@@ -1875,11 +1877,13 @@ ${relationsSummary}
     'давай позже',
     'я сейчас не могу'
   ];
-  if (!cleaned || badPhrases.some(p => lower.includes(p))) {
-    return null; // НИКАКИХ заготовок
-  }
-  return cleaned;
 
+  if (!cleaned ||
+      badPhrases.some(p => lower.includes(p))) {
+    return generateThought(char, post, delta);
+  }
+
+  return cleaned;
 }
 
 // Мысль персонажа о игроке в профиле
@@ -1939,76 +1943,272 @@ ${relationsSummary}
   return cleaned;
 }
 
-// (вставь это перед 'async function aiGenerateProfileThought(char)')
+function worldSnapshot(){
+  // Короткая «сводка мира» для ИИ (краткие био персонажей)
+  const lines = state.characters.map(c=>`- ${c.name}: ${clip(c.bio||'', 160)}`).join('\n');
+  return `КОНТЕКСТ МИРА:\n${lines}\n`;
+}
+
+// 3.1 Самостоятельный твит от персонажа (не завязан на игрока)
+async function aiGenerateAmbientCharacterTweet(char){
+  const prompt = `
+Ты — ${char.name} (${char.username}). Напиши короткий ПУБЛИЧНЫЙ твит от первого лица
+о своей повседневной жизни, мыслях или текущих событиях.
+Можно упомянуть других персонажей, но НЕ любого игрока напрямую.
+
+Требования:
+- 1–2 предложения, по-русски.
+- Стиль: ${char.tone}.
+- Никаких хэштегов, мета-оговорок, "как ИИ".
+- Если ничего не пришло в голову — верни пустую строку.
+
+${worldSnapshot()}
+БИО персонажа:
+${char.bio||''}
+`.trim();
+
+  const txt = await askAI(prompt);
+  if(!txt) return null;
+  const cleaned = txt.replace(/^"|"$/g,'').trim();
+  if (!cleaned || cleaned.length<8) return null;
+  return cleaned;
+}
+
+// 3.2 Твит от случайного NPC — мир/слухи/реакции
+async function aiGenerateNpcWorldTweet(npc, playerPost=null){
+  const anchor = playerPost ? `Игрок опубликовал пост: """${clip(playerPost.content, 140)}"""` : 'Игрок сейчас не постил.';
+  const prompt = `
+Ты — обычный житель города ${npc.name} (${npc.username}), интересуется темой: ${npc.topic}.
+Напиши короткий твит (1–2 предложения) по одной из линий:
+- заметка о городе/месте/событии,
+- невинный слух/сплетня о ПЕРСОНАЖАХ мира (не о реальных людях),
+- реакция на события мира (группа, ферма, ювелирный бизнес и т.п.).
+
+Избегай прямых атак на игроков и грязной лексики; допускаются оценочные суждения и сплетни.
+Стиль: ${npc.tone}. Без хэштегов и мета-оговорок.
+
+${anchor}
+
+${worldSnapshot()}
+`.trim();
+
+  const txt = await askAI(prompt);
+  if(!txt) return fallbackNpcTweet(npc);
+  const cleaned = txt.replace(/^"|"$/g,'').trim();
+  if (!cleaned || cleaned.length<8) return fallbackNpcTweet(npc);
+  return cleaned;
+}
+
+function fallbackNpcTweet(npc){
+  const pool = {
+    horses: [
+      'На ферме у Кассандры сегодня тепло и тихо — запах сена и счастья. Хочется остаться подольше.',
+      'Если любите лошадей, загляните к Кассандре — место, куда всегда тянет вернуться.'
+    ],
+    music: [
+      'Кажется, Ash&mercury снова в городе. Рифы слышны даже в наушниках соседей.',
+      'Музыка — единственный способ выдохнуть. Вечером — на репетицию.'
+    ],
+    gossip: [
+      'Слышал, что у кое‑кого из Блейдморов меняются планы. Город любит сюрпризы.',
+      'Говорят, кто‑то «тот самый» теперь ближе к конюшням, чем к суду. Интересно…'
+    ],
+    citylife: [
+      'Кофе на углу Ридж‑стрит сегодня спасает жизни.',
+      'Город пахнет дождём и электричеством — отличный день для новостей.'
+    ]
+  };
+  const list = pool[npc.topic] || ['Иногда лучше просто оглянуться по сторонам — и понять, что всё меняется.'];
+  return choice(list);
+}
+
+// 3.3 Твит от СМИ: news / tabloid
+async function aiGenerateOutletPost(outlet, playerPost=null){
+  const angle = outlet.outletType==='news'
+    ? 'нейтральный, фактологичный стиль'
+    : 'желтый заголовок, драматизация, оценочные суждения';
+
+  const hook = playerPost
+    ? `Повод: игрок опубликовал: """${clip(playerPost.content, 140)}""" — используй как инфоповод (если уместно).`
+    : 'Повода от игрока нет — выбери актуальный контекст из мира.';
+
+  const prompt = `
+Ты — медиа "${outlet.name}" (${outlet.username}), тип: ${outlet.outletType}.
+Стиль: ${angle}. Напиши короткий твит 1–2 предложения по-русски.
+Можно аккуратно ссылаться на персонажей мира по именам (это вымышленные персонажи).
+Хэштеги и мета-оговорки запрещены.
+
+${hook}
+
+Пример «таблоида» (можно варьировать тон):
+"Грейсон Блейдмор вместо того, чтобы стать адвокатом, стал конюхом? Громкое интервью. Оставайтесь с нами".
+
+${worldSnapshot()}
+`.trim();
+
+  const txt = await askAI(prompt);
+  if(!txt) return fallbackOutletTweet(outlet);
+  const cleaned = txt.replace(/^"|"$/g,'').trim();
+  if (!cleaned || cleaned.length<8) return fallbackOutletTweet(outlet);
+  return cleaned;
+}
+
+function fallbackOutletTweet(outlet){
+  if(outlet.outletType==='news'){
+    const bank = [
+      'Коротко: на ферме у Кассандры сегодня открыли посетительский день. Жители делятся фото и отзывами.',
+      'Город Сегодня: «Ash&mercury» репетируют к выходным; трафик у зала ожидается повышенный.'
+    ];
+    return choice(bank);
+  } else {
+    const bank = [
+      '«Он обещал юридическую карьеру, а теперь седла и сбруя». Случайность или выбор? Мы выясняем.',
+      'Слухи: у громкой семьи снова рокировка — кто на лошадях, а кто — на нервах? Следим.'
+    ];
+    const extra = [
+      '«Любовь до гроба»? Спросите у тех, кто сегодня чистит денники. Завязка для нового скандала?',
+      'Эксклюзив: мы слышали звон — и знаем, где он. Интервью уже в пути.',
+      'Громко шепчут: «они расстались?» Мы проверяем, кто и зачем это раздувает.'
+    ];
+    if (Math.random()<0.5) bank.push(choice(extra));
+    return choice(bank);
+  }
+}
+
+
+
 
 // Генерация ПУБЛИЧНОГО поста (твита) от лица NPC
 async function aiGenerateNpcPost(char, player, playerPost) {
   const relationsSummary = buildRelationsSummary(char);
   const shortPlayerPost = clip(playerPost.content, 150);
-  const privateThought = (char.lastThought || '').trim();
-
-  const maybeThought = privateThought 
-    ? `Твоя свежая внутренняя мысль по поводу этого поста:\n"""${privateThought}"""\n(Можешь опираться на неё, если она уместна.)\n`
-    : '';
+  
+  // КЛЮЧЕВОЙ МОМЕНТ:
+  // Мы берем "секретную мысль" персонажа, которую только что сгенерировали
+  // для модального окна, и используем ее как основу для публичного поста.
+  const privateThought = char.lastThought; 
 
   const prompt = `
-Ты — ${char.name} (${char.username}) из семейной саги.
-БИО:
+Ты — персонаж ${char.name} (${char.username}) из семейной саги.
+Твоя биография и канон:
 ${char.bio}
 
-Связи:
+Твои связи с другими:
 ${relationsSummary}
 
-Игрок ${player.name} (${player.username}) опубликовал:
+Только что, игрок ${player.name} (${player.username}) опубликовал пост:
 """${shortPlayerPost}"""
 
-${maybeThought}
-Напиши короткий публичный пост от лица ${char.name} (1–3 предложения, по-русски, без хэштегов и отсылок к ИИ/серверу). 
-Пост должен соответствовать твоему тону (${char.tone}) и канону. 
-Ответь только текстом поста.
-  `.trim();
+Твоя НЕМЕДЛЕННАЯ, ПЕРВАЯ, СЕКРЕТНАЯ мысль об этом посте была:
+"""${privateThought}"""
+
+ЗАДАЧА:
+Основываясь на своей личности, каноне И этой своей секретной мысли, напиши короткий, публичный "твит" (пост в соцсеть) от своего имени.
+Это может быть прямая реакция на пост ${player.name} или просто мысль "по мотивам" ("Некоторые люди никогда не меняются...").
+
+ТРЕБОВАНИЯ:
+1.  **Это ПУБЛИЧНЫЙ пост.** Он должен быть в твоём стиле (${char.tone}).
+2.  **Формат:** Коротко (1-3 предложения), по-русски, от первого лица (от ${char.name}).
+3.  **НИКАКИХ** хэштегов, смайликов (если это не в стиле ${char.tone}), или обращений к "серверу" / "ИИ".
+4.  **ВАЖНО:** Если твоя "секретная мысль" ("${privateThought}") была нейтральной или скучной, или если тебе нечего сказать публично — просто верни ПУСТУЮ СТРОКУ.
+
+Ответь ТОЛЬКО текстом твита, или пустой строкой.
+`.trim();
 
   const aiText = await askAI(prompt);
-  if (!aiText) return null;
+  if (!aiText) return null; // Ошибка ИИ
 
-  const cleaned = aiText.replace(/^"|"$/g, '').trim();
-  const bad = ['сервер', 'как ии', 'я не могу', 'ошибка', 'пост:','твіт:','твит:','хорошо, вот'];
-  if (!cleaned || cleaned.length < 10 || bad.some(p=>cleaned.toLowerCase().includes(p))) return null;
+  // Убираем лишние кавычки, которые ИИ любит добавлять
+  const cleaned = aiText.replace(/^"|"$/g, '').trim(); 
+
+  // Фильтруем "ответы-заглушки" от ИИ
+  const lower = cleaned.toLowerCase();
+  const badPhrases = [
+    'не могу', 'сервер', 'ошибка', 'я не знаю', 'как ии', 'как персонаж',
+    'твит:', 'пост:', 'я напишу:', 'хорошо, вот', 'пустая строка'
+  ];
+  
+  // Если ответ слишком короткий или содержит "плохие" фразы, считаем, что NPC решил промолчать
+  if (!cleaned || cleaned.length < 10 || badPhrases.some(p => lower.includes(p))) {
+    return null; 
+  }
 
   return cleaned;
 }
 
-// Было: перебор вообще всех + случайности
-// Стало: 1–5 релевантных от aiPickReactors, по одному посту каждому
+// Эта функция запускает «вдогонку» генерацию постов
 async function triggerNpcPostGeneration(playerPost) {
-  const plan = await aiPickReactors(playerPost, 5);
-  const ids = plan?.length ? plan.map(r => r.id) : getHeuristicReactors(playerPost, 5);
+  // Фаза 1: персонажи (оставляем твою логику как есть)
+  const charactersToReact = getRelevantCharacters(playerPost);
   const player = state.players.find(p => p.id === playerPost.authorId);
   let newPostsGenerated = false;
 
-  for (const id of ids) {
-    const char = state.characters.find(c => c.id === id);
-    if (!char) continue;
+  for (const char of charactersToReact) {
+    let postCount = 0;
+    const roll = Math.random();
+    if (roll > 0.95) postCount = 2;      // 5%
+    else if (roll > 0.6) postCount = 1;  // 35%
 
-    const postContent = await aiGenerateNpcPost(char, player, playerPost);
-    if (postContent) {
-      const p = postObj({
-        type: 'social',
-        authorType: 'character',
-        authorId: char.id,
-        content: postContent,
-        relatedCharacters: [playerPost.authorId]
-      });
-      state.posts.push(p);
-      newPostsGenerated = true;
+    for (let i = 0; i < postCount; i++) {
+      const postContent = await aiGenerateNpcPost(char, player, playerPost);
+      if (postContent) {
+        const p = postObj({
+          type: 'social',
+          authorType: 'character',
+          authorId: char.id,
+          content: postContent,
+          relatedCharacters: [playerPost.authorId]
+        });
+        state.posts.push(p);
+        newPostsGenerated = true;
+      }
+    }
+  }
+
+  // Фаза 2: «мир» — 2..10 постов от случайных NPC/СМИ
+  const worldCount = randint(2,10);
+  const allWorldAuthors = [
+    ...state.npcs.map(a=>({kind:'npc', a})),
+    ...state.outlets.map(a=>({kind:'outlet', a}))
+  ];
+
+  for (let i=0;i<worldCount;i++){
+    const pick = choice(allWorldAuthors);
+    if (pick.kind==='npc'){
+      const text = await aiGenerateNpcWorldTweet(pick.a, playerPost);
+      if (text){
+        state.posts.push(postObj({
+          type:'social',
+          authorType:'npc',
+          authorId: pick.a.id,
+          content: text,
+          relatedCharacters: []
+        }));
+        newPostsGenerated = true;
+      }
+    } else {
+      const text = await aiGenerateOutletPost(pick.a, playerPost);
+      if (text){
+        state.posts.push(postObj({
+          type:'social',
+          authorType:'outlet',
+          authorId: pick.a.id,
+          content: text,
+          relatedCharacters: []
+        }));
+        newPostsGenerated = true;
+      }
     }
   }
 
   if (newPostsGenerated) {
     save();
-    if ($('#view-feed').classList.contains('active')) renderFeed();
+    if ($('#view-feed').classList.contains('active')) {
+      renderFeed();
+    }
   }
 }
+
 
 // === реакции ===
 let lastReactionPostId = null;
@@ -2021,19 +2221,14 @@ function formatDelta(delta){
   return `${sign}${abs.toFixed(digits)}%`;
 }
 
-// применяем реакции и открываем модалку
 async function applyReactionsAndShowModal(post, isStory){
   lastReactionPostId = post.id;
   const wrap = $('#modalReactions');
 
-  // 1. СРАЗУ ПОКАЗЫВАЕМ МОДАЛКУ С "ТРЕМЯ ТОЧКАМИ"
-  wrap.innerHTML = '<div class="loader-dots"></div>';
-  $('#reactionModal').classList.remove('hidden');
-
-  // 2. ЖДЕМ, ПОКА ИИ "ДУМАЕТ"
+  // считаем «в фоне» (крутится спиннер на кнопке публикации)
   const rxList = await computeReactions(post, isStory);
-  
-  // 3. ТЕПЕРЬ ЗАМЕНЯЕМ "ТОЧКИ" НА РЕЗУЛЬТАТ
+
+  // Готовим контент модалки
   if(!rxList.length){
     wrap.innerHTML = `<p>Никто из ключевых персонажей не отреагировал.</p>`;
   }else{
@@ -2046,72 +2241,54 @@ async function applyReactionsAndShowModal(post, isStory){
       </div>`;
     }).join('');
   }
-  // (модалка уже и так была показана)
+
+  // Показываем модалку уже с готовыми реакциями
+  $('#reactionModal').classList.remove('hidden');
 }
 
 // считаем реакции и меняем отношения
-// ТЕПЕРЬ: реагируют только 1–5 персонажей, выбранных ИИ
-async function computeReactions(post, isStory) {
+async function computeReactions(post, isStory){
+  const relevant = getRelevantCharacters(post);
   const me = currentPlayer();
   const out = [];
 
-  // 1. Спрашиваем ИИ: кто вообще будет реагировать?
-  const plan = await aiPickReactors(post, 5);
-
-  // Если ИИ сломался или вернул ерунду — выбираем сами
-  const chosenIds =
-    plan && plan.length
-      ? plan.map(r => r.id)
-      : getHeuristicReactors(post, 5);
-
-  for (const charId of chosenIds) {
-    const c = state.characters.find(x => x.id === charId);
-    if (!c) continue;
-
+  for (const c of relevant){
     const currentAppr = c.approval[state.activePlayerId] ?? 50;
 
-    // 2. Берём дельту из плана ИИ, если она есть. Иначе считаем по старой формуле
-    let delta = null;
-    if (plan) {
-      const found = plan.find(r => r.id === charId);
-      if (found && typeof found.delta === 'number') {
-        delta = clamp(found.delta, -5, 5);
-      }
-    }
+    // базовая сила реакции
+    const base   = isStory ? 1.5 : 0.6;   // сюжетные сильнее
+    const spread = isStory ? 3.0 : 2.0;   // разброс
 
-    if (delta === null) {
-      const base = isStory ? 1.5 : 0.6;
-      const spread = isStory ? 3.0 : 2.0;
-      const moodBias = (currentAppr - 50) / 50;
-      let raw = base + spread * (Math.random() - 0.5) + moodBias;
+    // bias от текущей близости
+    const moodBias = (currentAppr - 50) / 50;
 
-      if (Math.abs(raw) < 0.3) {
-        raw = raw / 4;
-      }
-      if (Math.random() < 0.25) {
-        raw = -raw;
-      }
+    let raw = base + spread * (Math.random() - 0.5) + moodBias;
 
-      delta = Math.round(raw * 4) / 4;
-      delta = clamp(delta, -5, 5);
-    }
+    // очень слабые реакции приглушаем
+    if (Math.abs(raw) < 0.3) raw = raw / 4;
 
-    // 3. Просим ИИ написать текст реакции
-    const text = await aiGenerateReactionText(
-      c,
-      me,
-      post,
-      delta,
-      isStory
-    );
+    // иногда инвертируем знак
+    if (Math.random() < 0.25) raw = -raw;
 
-    // ЕСЛИ ИИ НЕ СМОГ НИЧЕГО НАПИСАТЬ — этот персонаж просто молчит
-    if (!text) continue;
+    // шаг 0.25, ограничение [-5;5]
+    let delta = Math.round(raw * 4) / 4;
+    delta = clamp(delta, -5, 5);
 
-    // 4. Обновляем отношение и сохраняем реакцию
+    // текст реакции
+    const text = await aiGenerateReactionText(c, me, post, delta, isStory);
+
+    // применяем изменение отношения
     const newAppr = clamp(currentAppr + delta, 0, 100);
     c.approval[state.activePlayerId] = newAppr;
-    c.lastThought = text;
+
+    // НАЗВАНИЕ отношений — через ИИ (с фоллбэком)
+    try{
+      const title = await aiGenerateRelationTitle(c, me, newAppr, delta);
+      if (!c.relationTitles) c.relationTitles = {};
+      c.relationTitles[state.activePlayerId] = title;
+    }catch(e){
+      // молча игнорируем
+    }
 
     const rx = reactionObj(post.id, c.id, text, delta);
     state.reactions.push(rx);
@@ -2123,10 +2300,6 @@ async function computeReactions(post, isStory) {
   return out;
 }
 
-function openReactionsForPost(postId){
-  lastReactionPostId = postId;
-  setActiveView('reactions');
-}
 
 function renderReactions(){
   const wrap = $('#reactionsList');
@@ -2201,17 +2374,53 @@ function generateThought(char, post, delta){
 
 // === утилиты ===
 
-function getRelevantCharacters(post) {
-  // Теперь она возвращает всех, КРОМЕ автора поста.
-  // (post.authorId будет 'player1' или 'player2' для игроков)
-  return state.characters.filter(c => c.id !== post.authorId);
+// Помощник: это id игрока?
+function isPlayerId(id){
+  return state.players.some(p => p.id === id);
 }
+
+function getRelevantCharacters(post){
+  // исключаем игроков (они пишут сами) и автора
+  const playerIds = new Set(state.players.map(p=>p.id));
+  const meId = state.activePlayerId;
+
+  const txt = (post.content||'').toLowerCase();
+
+  const scored = state.characters
+    .filter(c => !playerIds.has(c.id) && c.id !== post.authorId)
+    .map(c => {
+      let score = 0;
+      const appr = c.approval?.[meId] ?? 50;
+      score += appr; // кто теплее относится — более вероятно реагирует
+
+      // если упомянуты имя или username — усиливаем
+      if (c.name && txt.includes(c.name.toLowerCase())) score += 40;
+      if (c.username && txt.includes(c.username.slice(1).toLowerCase())) score += 25;
+
+      // лёгкий бонус, если уже недавно думал/писал
+      if (c.lastThought) score += 5;
+
+      return { c, score };
+    })
+    .sort((a,b)=>b.score - a.score)
+    .map(x=>x.c);
+
+  const k = Math.min(scored.length, randint(2,5));
+  return scored.slice(0, k);
+}
+
 
 function authorName(p){
   if(!p) return '—';
   if(p.authorType==='player')
     return state.players.find(x=>x.id===p.authorId)?.name || 'Игрок';
-  return state.characters.find(x=>x.id===p.authorId)?.name || 'Персонаж';
+  if(p.authorType==='character')
+    return state.characters.find(x=>x.id===p.authorId)?.name || 'Персонаж';
+  if(p.authorType==='npc')
+    return state.npcs.find(x=>x.id===p.authorId)?.name || 'Житель';
+  if(p.authorType==='outlet')
+    return state.outlets.find(x=>x.id===p.authorId)?.name || 'Медиа';
+  return 'Автор';
 }
 
 function currentPlayer(){ return state.players.find(p=>p.id===state.activePlayerId); }
@@ -2255,6 +2464,81 @@ function setupMyProfileButton() {
   };
 }
 
+// --- ФОНОВЫЕ ПОСТЫ МИРА ---
+
+const AMBIENT_MIN_MS = 45000;   // минимум 45 секунд
+const AMBIENT_MAX_MS = 120000;  // максимум 120 секунд
+
+async function ambientPostsTick(){
+  let any = false;
+
+  // 0–3 персонажа публикуют самостоятельные мысли
+  const chars = state.characters
+    .slice()
+    .sort(()=>Math.random()-Math.random())
+    .slice(0, randint(0,3));
+
+  for (const c of chars){
+    const text = await aiGenerateAmbientCharacterTweet(c);
+    if (text){
+      state.posts.push(postObj({
+        type:'social',
+        authorType:'character',
+        authorId:c.id,
+        content:text
+      }));
+      any = true;
+    }
+  }
+
+  // 0–6 постов от NPC/СМИ без привязки к игроку
+  const pool = [
+    ...state.npcs.map(a=>({kind:'npc', a})),
+    ...state.outlets.map(a=>({kind:'outlet', a}))
+  ].sort(()=>Math.random()-Math.random())
+   .slice(0, randint(0,6));
+
+  for (const pick of pool){
+    if (pick.kind==='npc'){
+      const text = await aiGenerateNpcWorldTweet(pick.a, null);
+      if (text){
+        state.posts.push(postObj({
+          type:'social',
+          authorType:'npc',
+          authorId: pick.a.id,
+          content: text
+        }));
+        any = true;
+      }
+    } else {
+      const text = await aiGenerateOutletPost(pick.a, null);
+      if (text){
+        state.posts.push(postObj({
+          type:'social',
+          authorType:'outlet',
+          authorId: pick.a.id,
+          content: text
+        }));
+        any = true;
+      }
+    }
+  }
+
+  if(any){
+    save();
+    if ($('#view-feed').classList.contains('active')) renderFeed();
+  }
+}
+
+function scheduleAmbientPosting(){
+  const ms = randint(AMBIENT_MIN_MS, AMBIENT_MAX_MS);
+  setTimeout(async ()=>{
+    try { await ambientPostsTick(); } catch(e){ console.error(e); }
+    scheduleAmbientPosting();
+  }, ms);
+}
+
+
 // === старт приложения ===
 document.addEventListener('DOMContentLoaded', ()=>{
   load();
@@ -2268,6 +2552,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   setupMyProfileButton();
   renderFeed();
   renderRelations();
+  scheduleAmbientPosting(); // мир начинает жить сам по себе
 });
 </script>
 
