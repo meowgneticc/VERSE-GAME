@@ -1637,7 +1637,6 @@ function paintIdea(){
 // ключ для переписки игрока с конкретным персонажем
 function threadKey(charId){
   const playerId = state.activePlayerId;
-  return `${charId}_${playerId}`;
 }
 
 function syncDmSelectors(){
@@ -2257,7 +2256,6 @@ function setupMyProfileButton() {
 // === старт приложения ===
 document.addEventListener('DOMContentLoaded', ()=>{
   load();
-  setupNav();
   setupPlayers();
   setupFilters();
   setupComposeSocial();
