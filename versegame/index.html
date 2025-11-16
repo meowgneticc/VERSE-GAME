@@ -222,103 +222,115 @@
       color:var(--muted);
     }
 
-/* CHARACTER PROFILE */
-.char-view{
-  max-width:430px;
-  margin:0 auto;
-}
+    /* CHARACTER PROFILE */
+    .char-view{
+      max-width:430px;
+      margin:0 auto;
+    }
 
-.char-cover{
-  height:120px;
-  background:#d8dadf;
-  border-radius:24px 24px 0 0;
-}
+    .char-cover{
+      height:120px;
+      background:#d8dadf;
+      border-radius:24px 24px 0 0;
+    }
 
-.char-header{
-  background:#fff;
-  border-radius:24px;
-  border:1px solid var(--card-border);
-  margin-top:-48px;
-  padding:1.2rem 1.1rem 1rem;
-}
+    .char-header{
+      background:#fff;
+      border-radius:24px;
+      border:1px solid var(--card-border);
+      margin-top:-48px;
+      padding:1.2rem 1.1rem 1rem;
+    }
 
-.char-header-top{
-  display:flex;
-  align-items:flex-end;
-  gap:1rem;
-}
+    .char-header-top{
+      display:flex;
+      align-items:flex-end;
+      gap:1rem;
+    }
 
-.char-avatar{
-  width:96px;
-  height:96px;
-  border-radius:50%;
-  border:3px solid #fff;
-  background:#ccc;
-  overflow:hidden;
-  flex-shrink:0;
-}
+    .char-avatar{
+      width:96px;
+      height:96px;
+      border-radius:50%;
+      border:3px solid #fff;
+      background:#ccc;
+      overflow:hidden;
+      flex-shrink:0;
+    }
 
-.char-avatar img{
-  width:100%;
-  height:100%;
-  object-fit:cover;
-}
+    .char-avatar img{
+      width:100%;
+      height:100%;
+      object-fit:cover;
+    }
 
-.char-name{
-  font-size:1.4rem;
-  font-weight:700;
-}
+    .char-name{
+      font-size:1.4rem;
+      font-weight:700;
+    }
 
-.char-username{
-  font-size:.9rem;
-  color:var(--muted);
-}
+    .char-username{
+      font-size:.9rem;
+      color:var(--muted);
+    }
 
-.char-bio{
-  margin-top:.9rem;
-  font-size:.9rem;
-  line-height:1.5;
-}
+    .char-bio{
+      margin-top:.9rem;
+      font-size:.9rem;
+      line-height:1.5;
+      white-space:pre-wrap;
+    }
 
-.char-rel-block{
-  margin-top:1.2rem;
-}
+    .char-bio-edit{
+      width:100%;
+      border-radius:18px;
+      border:1px solid var(--card-border);
+      padding:.6rem .7rem;
+      margin-top:.6rem;
+      font:inherit;
+      line-height:1.5;
+      resize:vertical;
+    }
 
-.char-rel-label-row{
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  font-size:.86rem;
-  color:var(--muted);
-  margin-bottom:.35rem;
-}
+    .char-rel-block{
+      margin-top:1.2rem;
+    }
 
-.char-rel-bar{
-  height:16px;
-  border-radius:999px;
-  background:#f3f4f8;
-  border:1px solid #e1e4ec;
-  overflow:hidden;
-}
+    .char-rel-label-row{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      font-size:.86rem;
+      color:var(--muted);
+      margin-bottom:.35rem;
+    }
 
-.char-rel-bar > span{
-  display:block;
-  height:100%;
-  background:linear-gradient(90deg,#3bc76b,#70e08c);
-}
+    .char-rel-bar{
+      height:16px;
+      border-radius:999px;
+      background:#f3f4f8;
+      border:1px solid #e1e4ec;
+      overflow:hidden;
+    }
 
-.char-rel-title{
-  margin-top:1rem;
-  font-size:1rem;
-  font-weight:700;
-}
+    .char-rel-bar > span{
+      display:block;
+      height:100%;
+      background:linear-gradient(90deg,#3bc76b,#70e08c);
+    }
 
-.char-actions-row{
-  margin-top:1rem;
-  display:flex;
-  gap:.5rem;
-}
+    .char-rel-title{
+      margin-top:.7rem;
+      font-size:.95rem;
+      font-weight:600;
+    }
 
+    .char-actions-row{
+      margin-top:1rem;
+      display:flex;
+      gap:.5rem;
+      flex-wrap:wrap;
+    }
 
     /* COMPOSE */
     .compose textarea{
@@ -551,14 +563,13 @@
         <div id="relationsList" class="relations"></div>
       </section>
 
-            <!-- CHARACTER PROFILE (новый экран) -->
+      <!-- CHARACTER PROFILE (Экран 2.5) -->
       <section id="view-character" class="view">
         <div class="view-head">
           <h1>Профиль персонажа</h1>
         </div>
         <div id="characterView" class="char-view"></div>
       </section>
-
 
       <!-- COMPOSE SOCIAL (Экран 3) -->
       <section id="view-compose" class="view">
@@ -665,7 +676,6 @@
   </div>
 
 <script>
-// ===== JS (бывший app.js, полный, ЧИСТАЯ ВЕРСИЯ) =====
 const $  = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 const uid = (p='id') => `${p}_${Math.random().toString(36).slice(2,9)}`;
@@ -675,15 +685,8 @@ const fmtTime = (iso) => new Date(iso).toLocaleString();
 const randint = (a,b)=>Math.floor(Math.random()*(b-a+1))+a;
 const choice = (arr)=>arr[Math.floor(Math.random()*arr.length)];
 const clamp=(x,min,max)=>Math.max(min,Math.min(max,x));
-function relationLabelFromValue(v) {
-  if (v >= 85) return 'очень сильная, почти неразрывная связь';
-  if (v >= 70) return 'тёплые, доверительные отношения';
-  if (v >= 55) return 'ровные, спокойные отношения';
-  if (v >= 40) return 'натянутая, хрупкая связь';
-  if (v >= 20) return 'почти разрушенная связь';
-  return 'разорванные узы';
-}
-  // Собираем краткое описание связей персонажа с другими
+
+// Собираем краткое описание связей персонажа с другими
 function buildRelationsSummary(char) {
   if (!char.relations) return 'Нет явных связей.';
 
@@ -744,8 +747,8 @@ async function aiReplyToDm(charId) {
   const prompt = `
 Ты — персонаж ${char.name} (${char.username}) в переписке в личных сообщениях вымышленной социальной сети.
 
-КАНОНИЧЕСКАЯ ИНФОРМАЦИЯ О ПЕРСОНАЖЕ (ЕЁ НЕЛЬЗЯ МЕНЯТЬ И ПУТАТЬ):
-- Биография персонажа:
+КАНОНИЧЕСКАЯ ИНФОРМАЦИЯ О ПЕРСОНАЖЕ:
+- Биография персонажа (используй как базу, она может редактироваться автором):
 ${char.bio}
 
 - Связи и отношения с другими персонажами:
@@ -776,8 +779,6 @@ ${historyText}
   pushMessage(charId, charId, aiText);
 }
 
-
-  
 let state = {
   players: [
     { id:'player1', name:'Грейсон',  username:'@LiqueurD',   followers:320 },
@@ -1115,6 +1116,92 @@ function addQuickComment(postId){
   renderFeed();
 }
 
+// === CHARACTER PROFILE ===
+let currentProfileCharId = null;
+
+function relationLabelFromValue(v){
+  if (v >= 85) return 'душевная близость';
+  if (v >= 70) return 'близкие союзники';
+  if (v >= 50) return 'нейтральная связь';
+  if (v >= 30) return 'натянутое общение';
+  return 'разлад и напряжение';
+}
+
+function openCharacterProfile(charId){
+  currentProfileCharId = charId;
+  renderCharacterProfile();
+  setActiveView('character');
+}
+
+function renderCharacterProfile(){
+  if (!currentProfileCharId) return;
+  const me = currentPlayer();
+  const c = state.characters.find(x=>x.id===currentProfileCharId);
+  if (!c) return;
+
+  const box = document.getElementById('characterView');
+  const appr = (c.approval?.[state.activePlayerId] ?? 50);
+  const relTitle = relationLabelFromValue(appr);
+  const username = c.username || '@username';
+  const bio = c.bio || 'Описание персонажа пока не заполнено.';
+
+  const avatarImg = c.avatar
+    ? `<img src="${c.avatar}" alt="${c.name}">`
+    : '';
+
+  box.innerHTML = `
+    <div class="char-cover"></div>
+    <div class="char-header">
+      <div class="char-header-top">
+        <div class="char-avatar">${avatarImg}</div>
+        <div>
+          <div class="char-name">${c.name}</div>
+          <div class="char-username">${username}</div>
+        </div>
+      </div>
+
+      <div class="char-bio">
+        ${bio.replace(/\n/g,'<br>')}
+      </div>
+
+      <textarea id="charBioEdit" class="char-bio-edit" rows="6"
+        placeholder="Подробное описание персонажа, его характер, травмы, отношения, триггеры и т.п.">${bio}</textarea>
+
+      <div class="char-rel-block">
+        <div class="char-rel-label-row">
+          <span>Связь с ${me.name}</span>
+          <span><strong>${Math.round(appr)}%</strong></span>
+        </div>
+        <div class="char-rel-bar">
+          <span style="width:${clamp(appr,0,100)}%"></span>
+        </div>
+        <div class="char-rel-title">
+          ${relTitle}
+        </div>
+      </div>
+
+      <div class="char-actions-row">
+        <button class="primary" onclick="saveCharacterBio()">Сохранить описание</button>
+        <button class="secondary" onclick="openDm('${c.id}')">Перейти в ЛС</button>
+        <button class="ghost" onclick="setActiveView('relations')">Назад к списку</button>
+      </div>
+    </div>
+  `;
+}
+
+function saveCharacterBio(){
+  if (!currentProfileCharId) return;
+  const c = state.characters.find(x=>x.id===currentProfileCharId);
+  if (!c) return;
+  const ta = document.getElementById('charBioEdit');
+  if (!ta) return;
+  c.bio = ta.value.trim();
+  save();
+  // лёгкий фидбек, можно убрать alert если раздражает
+  alert('Описание персонажа сохранено.');
+  renderCharacterProfile();
+}
+
 // === отношения ===
 function renderRelations(){
   const box = $('#relationsList');
@@ -1122,7 +1209,7 @@ function renderRelations(){
     const appr = (c.approval[state.activePlayerId] ?? 50);
     const thought = c.lastThought ? clip(c.lastThought, 180) : '—';
     return `
-            <div class="rel-card" onclick="openCharacterProfile('${c.id}')">
+      <div class="rel-card" onclick="openCharacterProfile('${c.id}')">
         <div class="rel-top">
           <div class="avatar"></div>
           <div>
@@ -1134,10 +1221,8 @@ function renderRelations(){
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:.4rem;">
           <div class="muted">Уровень: ${appr}%</div>
           <div class="rel-actions">
-  <button class="secondary" onclick="event.stopPropagation(); openDm('${c.id}')">
-    ЛС
-  </button>
-</div>
+            <button class="secondary" onclick="event.stopPropagation(); openDm('${c.id}')">ЛС</button>
+          </div>
         </div>
         <div class="rel-thought">Мысль: ${thought}</div>
       </div>
@@ -1172,13 +1257,12 @@ function setupComposeSocial(){
       authorType:'player',
       authorId:state.activePlayerId,
       content,
-      relatedCharacters: [], // дальше логика сама поймёт, кого задело
+      relatedCharacters: [],
       photoData
     });
 
     state.posts.push(p);
     applyReactionsAndShowModal(p, false);
-    generateCharacterCoPosts(p);
 
     $('#composeText').value = '';
     $('#composePhoto').value = '';
@@ -1233,7 +1317,6 @@ function setupComposeStory(){
 
     state.posts.push(p);
     applyReactionsAndShowModal(p, true);
-    generateCharacterCoPosts(p);
 
     $('#storyText').value = '';
 
@@ -1297,95 +1380,19 @@ function setupDm(){
     renderDmThread(id);
   });
 
-  // отправка сообщения + ИИ-ответ
   $('#dmSend').onclick = async ()=>{
     const charId = $('#dmSelect').value;
     const text = $('#dmInput').value.trim();
     if (!text) return;
 
-    // сообщение от активного игрока
     pushMessage(charId, state.activePlayerId, text);
     $('#dmInput').value = '';
 
-    // если включён чекбокс "Бот может писать сам" — зовём ИИ
     if ($('#dmAutoToggle').checked) {
       await aiReplyToDm(charId);
     }
   };
-} // ← вот этой скобки и не хватало
- 
-
-function botReplyLater(charId, playerText){
-  const char = state.characters.find(c=>c.id===charId);
-  const reply = generateBotReply(char, playerText);
-  setTimeout(()=>{ pushMessage(charId, charId, reply); }, randint(1200, 2400));
 }
-
-// === CHARACTER PROFILE (страница персонажа) ===
-let currentProfileCharId = null;
-
-function openCharacterProfile(charId){
-  currentProfileCharId = charId;
-  renderCharacterProfile();
-  setActiveView('character');
-}
-
-function renderCharacterProfile(){
-  if (!currentProfileCharId) return;
-  const me = currentPlayer();
-  const c = state.characters.find(x=>x.id===currentProfileCharId);
-  if (!c) return;
-
-  const box = document.getElementById('characterView');
-  const appr = (c.approval?.[state.activePlayerId] ?? 50);
-  const relTitle =
-    (c.relationTitles && c.relationTitles[state.activePlayerId])
-      ? c.relationTitles[state.activePlayerId]
-      : relationLabelFromValue(appr);
-
-  const bio = c.bio || 'Описание персонажа пока не заполнено.';
-  const username = c.username || '@username';
-
-  const avatarImg = c.avatar
-    ? `<img src="${c.avatar}" alt="${c.name}">`
-    : '';
-
-  box.innerHTML = `
-    <div class="char-cover"></div>
-    <div class="char-header">
-      <div class="char-header-top">
-        <div class="char-avatar">${avatarImg}</div>
-        <div>
-          <div class="char-name">${c.name}</div>
-          <div class="char-username">${username}</div>
-        </div>
-      </div>
-
-      <div class="char-bio">
-        ${bio.replace(/\n/g,'<br>')}
-      </div>
-
-      <div class="char-rel-block">
-        <div class="char-rel-label-row">
-          <span>Связь с ${me.name}</span>
-          <span><strong>${Math.round(appr)}%</strong></span>
-        </div>
-        <div class="char-rel-bar">
-          <span style="width:${clamp(appr,0,100)}%"></span>
-        </div>
-        <div class="char-rel-title">
-          ${relTitle}
-        </div>
-      </div>
-
-      <div class="char-actions-row">
-        <button class="secondary" onclick="openDm('${c.id}')">Перейти в ЛС</button>
-        <button class="ghost" onclick="setActiveView('relations')">Назад</button>
-      </div>
-    </div>
-  `;
-}
-
 
 // === реакции ===
 let lastReactionPostId = null;
@@ -1516,17 +1523,6 @@ function generateThought(char, post, delta){
   return toneWrap(char.tone, base) + mention;
 }
 
-function generateCharacterPost(char, triggerPost){
-  const seeds = [
-    `Думаю об этом: «${clip(triggerPost.content, 80)}». Странное чувство.`,
-    `В мире явно что-то меняется. Замечаете?`,
-    `Слишком много недосказанности. Пора говорить открыто.`,
-    `Иногда лучше промолчать. Но не сегодня.`,
-    `Не люблю шум, но иногда молчать — хуже.`
-  ];
-  return toneWrap(char.tone, choice(seeds));
-}
-
 function generateStoryIdeas(){
   const who = 'кто-то важный';
   return [
@@ -1536,42 +1532,6 @@ function generateStoryIdeas(){
     `Сцена признания, но не про любовь — про правду.`,
     `Наблюдения за городом из окна: внутренний поток мыслей.`
   ];
-}
-
-function generateBotReply(char, playerText){
-  const soft = [
-    'Слушаю. Хочешь рассказать подробнее?',
-    'Это важно для тебя?',
-    'Я понял. Давай разберёмся.',
-    'Оставлю это при себе. Но я рядом.',
-  ];
-  const sharp = [
-    'Слишком громко звучит.',
-    'Не торопись с выводами.',
-    'Ты уверен(а) в этом?',
-    'Интересно, но я не согласен.',
-  ];
-  if(!char) return 'Понял.';
-
-  switch(char.tone){
-    case 'warm':  return choice(soft);
-    case 'cold':  return choice(sharp);
-    case 'sharp': return Math.random()<.5?choice(sharp):choice(soft);
-    case 'stoic': return 'Принято.';
-    case 'chaotic':return 'Ооо давай ещё огня 🔥';
-    default: return 'Понял.';
-  }
-}
-
-function generateBotSpontaneousText(char){
-  const seeds = [
-    'Ты свободен(а) сейчас?',
-    'Случайная мысль.',
-    'Это не даёт мне покоя.',
-    'Хочу кое-что уточнить.',
-    'Интересный день сегодня.'
-  ];
-  return toneWrap(char.tone, choice(seeds));
 }
 
 // === утилиты ===
