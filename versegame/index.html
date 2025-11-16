@@ -249,13 +249,15 @@
     }
 
     .char-avatar{
-      width:96px;
-      height:96px;
-      border-radius:50%;
-      border:3px solid #fff;
-      background:#ccc;
-      overflow:hidden;
-      flex-shrink:0;
+  width:96px;
+  height:96px;
+  border-radius:50%;
+  border:3px solid #fff;
+  background:#ccc;
+  overflow:hidden;
+  flex-shrink:0;
+  cursor:pointer;
+  position:relative;
     }
 
     .char-avatar img{
@@ -263,6 +265,25 @@
       height:100%;
       object-fit:cover;
     }
+
+    .char-avatar::after{
+  content:'изменить';
+  position:absolute;
+  left:50%;
+  bottom:4px;
+  transform:translateX(-50%);
+  padding:2px 6px;
+  border-radius:999px;
+  font-size:10px;
+  background:rgba(0,0,0,.55);
+  color:#fff;
+}
+
+.char-avatar-btn{
+  margin-top:.4rem;
+  font-size:.8rem;
+  padding:.3rem .7rem;
+}
 
     .char-name{
       font-size:1.4rem;
@@ -282,14 +303,13 @@
     }
 
     .char-bio-edit{
-      width:100%;
-      border-radius:18px;
-      border:1px solid var(--card-border);
-      padding:.6rem .7rem;
-      margin-top:.6rem;
-      font:inherit;
-      line-height:1.5;
-      resize:vertical;
+  width:100%;
+  margin-top:.6rem;
+  border-radius:18px;
+  border:1px solid var(--card-border);
+  padding:.7rem .8rem;
+  font:inherit;
+  resize:vertical;
     }
 
     .char-rel-block{
@@ -1151,13 +1171,11 @@ function renderCharacterProfile(){
     ? `<img src="${c.avatar}" alt="${c.name}">`
     : '';
 
-  // показываем textarea только если включён режим редактирования
   const editBlock = isEditingBio
     ? `<textarea id="charBioEdit" class="char-bio-edit" rows="6"
         placeholder="Подробное описание персонажа, его характер, травмы, отношения, триггеры и т.п.">${bio}</textarea>`
     : '';
 
-  // разные кнопки для режимов
   const actions = isEditingBio
     ? `
       <button class="primary" onclick="saveCharacterBio()">Сохранить описание</button>
@@ -1175,12 +1193,18 @@ function renderCharacterProfile(){
     <div class="char-cover"></div>
     <div class="char-header">
       <div class="char-header-top">
-        <div class="char-avatar">${avatarImg}</div>
+        <div class="char-avatar" onclick="selectCharacterAvatar()">
+          ${avatarImg}
+        </div>
         <div>
           <div class="char-name">${c.name}</div>
           <div class="char-username">${username}</div>
         </div>
       </div>
+
+      <button class="ghost char-avatar-btn" onclick="selectCharacterAvatar()">
+        Изменить аватар
+      </button>
 
       <div class="char-bio">
         ${bio.replace(/\n/g,'<br>')}
@@ -1204,8 +1228,16 @@ function renderCharacterProfile(){
       <div class="char-actions-row">
         ${actions}
       </div>
+
+      <input id="charAvatarInput" type="file" accept="image/*" hidden />
     </div>
   `;
+
+  // навешиваем обработчик на инпут (он пересоздаётся при каждом рендере)
+  const avatarInput = document.getElementById('charAvatarInput');
+  if (avatarInput) {
+    avatarInput.addEventListener('change', handleAvatarFile);
+  }
 }
 
 function saveCharacterBio(){
@@ -1228,6 +1260,27 @@ function cancelEditBio(){
   isEditingBio = false;
   renderCharacterProfile();
 }
+
+function selectCharacterAvatar(){
+  const input = document.getElementById('charAvatarInput');
+  if (input) input.click();
+}
+
+function handleAvatarFile(e){
+  const file = e.target.files && e.target.files[0];
+  if (!file || !currentProfileCharId) return;
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    const c = state.characters.find(x => x.id === currentProfileCharId);
+    if (!c) return;
+    c.avatar = reader.result;       // dataURL
+    save();
+    renderCharacterProfile();       // перерисовываем профиль
+  };
+  reader.readAsDataURL(file);
+}
+
 
 // === отношения ===
 function renderRelations(){
