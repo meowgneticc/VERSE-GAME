@@ -814,6 +814,51 @@ async function askAI(promptText) {
   }
 }
 
+// === Снимок мира для ЛС ===
+// Короткий дайджест последних событий и упоминаний игрока/персонажа
+function worldSnapshotForDm(charId, playerId = state.activePlayerId, limitRecent = 6, limitMentions = 6) {
+  const me   = state.players.find(p => p.id === playerId);
+  const char = state.characters.find(c => c.id === charId) || state.players.find(p => p.id === charId);
+
+  const byTime = (a,b) => b.createdAt.localeCompare(a.createdAt);
+
+  // 1) просто последние посты
+  const recent = state.posts.slice().sort(byTime).slice(0, limitRecent);
+
+  // 2) посты, где упомянуты игрок/персонаж
+  function mentions(p){
+    const t = (p.content || '').toLowerCase();
+    const keys = [];
+    if (char?.name)      keys.push(char.name.toLowerCase());
+    if (char?.username)  keys.push(char.username.replace(/^@/,'').toLowerCase());
+    if (me?.name)        keys.push(me.name.toLowerCase());
+    if (me?.username)    keys.push(me.username.replace(/^@/,'').toLowerCase());
+    return keys.some(k => t.includes(k));
+  }
+  const mentioned = state.posts.slice().sort(byTime).filter(mentions).slice(0, limitMentions);
+
+  // объединяем без дублей
+  const combined = [...recent, ...mentioned]
+    .filter((p, i, arr) => arr.findIndex(x => x.id === p.id) === i)
+    .slice(0, limitRecent + limitMentions);
+
+  // формат строк
+  const lines = combined.map(p => {
+    const a = getAuthorByType(p.authorType, p.authorId);
+    const author = (p.authorType === 'npc') ? (a?.username || '@житель')
+                 : (a?.name || 'Кто-то');
+    const tag = p.type === 'story' ? '[сюжет]' : '';
+    return `• ${author} ${tag}: ${clip((p.content || '').replace(/\n/g,' '), 140)}`;
+  });
+
+  return lines.join('\n') || 'Пока нет заметных событий.';
+}
+
+// Безопасная заглушка, пока не подключили профильные мысли AI
+if (typeof aiGenerateProfileThought === 'undefined') {
+  async function aiGenerateProfileThought() { return null; }
+}
+
 
 async function aiReplyToDm(charId) {
   const char = state.characters.find(c => c.id === charId);
@@ -829,40 +874,38 @@ async function aiReplyToDm(charId) {
   }).join('\n');
 
   const relationsSummary = buildRelationsSummary(char);
+  const worldBrief = worldSnapshotForDm(charId, state.activePlayerId);
 
   const prompt = `
-Ты — персонаж ${char.name} (${char.username}) в переписке в личных сообщениях вымышленной социальной сети.
+Ты — персонаж ${char.name} (${char.username}) и ведёшь личную переписку внутри вымышленной социальной сети.
 
-КАНОНИЧЕСКАЯ ИНФОРМАЦИЯ О ПЕРСОНАЖЕ:
-- Биография персонажа (используй как базу, она может редактироваться автором):
-${char.bio}
-
-- Связи и отношения с другими персонажами:
+КАНОН (это истина, не меняй факты):
+• Биография:
+${char.bio || '(био пока пусто)'}
+• Связи и отношения:
 ${relationsSummary}
+• Текущее отношение к игроку ${me.name}: ${char.approval[state.activePlayerId] ?? 50} из 100.
 
-Эти факты о связях считаются истиной. 
-НЕ ПЕРЕПУТЫВАЙ, кто кому кем приходится, не выдумывай новые родства и не меняй роли.
-Если в сообщении игрока есть противоречие этим фактам — мягко поправь его или аккуратно намекни, но сам канон НЕ меняй.
+Мир и последние события (кратко):
+${worldBrief}
 
-Тон общения: ${char.tone}.
-Текущее отношение к игроку ${me.name}: ${char.approval[state.activePlayerId] ?? 50} из 100.
+История переписки (формат "Имя: текст"):
+${historyText || '(истории нет)'}
 
-История переписки между тобой и игроком:
-${historyText}
+Правила ответа:
+1) Пиши по‑русски, от первого лица, в характере: ${char.tone}.
+2) Дай 1–3 короткие реплики, без описаний действий и маркеров типа *...*.
+3) Учитывай канон: не придумывай новые родства/события; если игрок ошибся — мягко поправь.
+4) Тон зависит от текущего отношения: ниже — холоднее/жёстче, выше — теплее/поддерживающе.
+5) Если уместно, ссылайся на события из сводки мира.
 
-Сейчас, от лица ${char.name}, ответь на ПОСЛЕДНЕЕ сообщение игрока.
-Формат ответа:
-- по-русски
-- от первого лица
-- 1–3 короткие реплики
-- без описания действий, только текст сообщений
-- соответствуй характеру и каноничным связям.
+Ответь только текстом реплик без префиксов.
 `;
 
   const aiText = await askAI(prompt);
   if (!aiText) return;
 
-  pushMessage(charId, charId, aiText);
+  pushMessage(charId, charId, aiText.trim());
 }
 
 let state = {
@@ -1792,14 +1835,16 @@ function syncDmSelectors(){
 
 function openDm(charId){
   setActiveView('dm');
-  // Убедимся, что персонаж есть в списке, прежде чем выбирать
-  if ($('#dmSelect option[value="' + charId + '"]').length > 0) {
-      $('#dmSelect').value = charId;
+  // корректная проверка существования option
+  const opt = document.querySelector('#dmSelect option[value="' + charId + '"]');
+  if (opt) {
+    $('#dmSelect').value = charId;
   }
   const c = state.characters.find(x=>x.id===charId);
   $('#dmTitle').textContent = 'ЛС · ' + (c?.name || '');
   renderDmThread(charId);
 }
+
 
 function renderDmThread(charId){
   const key = threadKey(charId);
