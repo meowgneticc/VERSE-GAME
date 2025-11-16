@@ -1511,6 +1511,137 @@ function setupDm(){
   };
 }
 
+// === AI-реакции на пост и мысли в профиле ===
+
+// Генерация глубокой реакции персонажа на пост
+async function aiGenerateReactionText(char, player, post, delta, isStory) {
+  const relationsSummary = buildRelationsSummary(char);
+  const shortPost = post.content.length > 240
+    ? post.content.slice(0, 240) + '…'
+    : post.content;
+
+  const emotionalTone =
+    Math.abs(delta) >= 3 ? 'сильную эмоциональную' : 'лёгкую, но заметную';
+  const valence = delta > 0
+    ? 'скорее позитивную'
+    : delta < 0
+      ? 'скорее негативную'
+      : 'скорее смешанную или нейтральную';
+  const postType = isStory ? 'сюжетный пост' : 'обычный пост в ленте';
+
+  const prompt = `
+Ты — ${char.name} (${char.username}) из семейной саги.
+У тебя есть своя биография и связи:
+
+БИО:
+${char.bio}
+
+СВЯЗИ:
+${relationsSummary}
+
+Сейчас игрок ${player.name} опубликовал ${postType}.
+Текст поста:
+"""${shortPost}"""
+
+Твоя задача — придумать короткую, очень характерную РЕАКЦИЮ ${char.name} на этот пост.
+
+Требования:
+- 1–2 предложения по-русски.
+- От третьего лица: как сообщение-наблюдение, например
+  "Кристиан усмехнулся: ..." или "Ева подумала, что ...".
+- Покажи мотивацию персонажа и его отношение к игроку.
+- Учти, что реакция должна быть ${emotionalTone} и ${valence}.
+- Не обращайся напрямую к ИИ, к серверу и т.п.
+- НИКАКИХ фраз вроде "я не могу нормально ответить", "сервер недоступен" и т.п.
+Ответь только текстом реакции, без подпунктов и без пояснений.
+
+Помни, кто такой ${char.name}, и как он относится к игроку ${player.name}.
+  `.trim();
+
+  const aiText = await askAI(prompt);
+
+  // если ИИ не ответил или ответ странный —fallback
+  if (!aiText) {
+    return generateThought(char, post, delta);
+  }
+
+  const cleaned = aiText.replace(/\s+/g, ' ').trim();
+  const lower = cleaned.toLowerCase();
+
+  const badPhrases = [
+    'не могу нормально ответить',
+    'не могу сейчас нормально ответить',
+    'связь с сервером',
+    'давай позже',
+    'я сейчас не могу'
+  ];
+
+  if (!cleaned ||
+      badPhrases.some(p => lower.includes(p))) {
+    return generateThought(char, post, delta);
+  }
+
+  return cleaned;
+}
+
+// Мысль персонажа о игроке в профиле
+async function aiGenerateProfileThought(char) {
+  const me = currentPlayer();
+  const appr = char.approval[state.activePlayerId] ?? 50;
+  const relationsSummary = buildRelationsSummary(char);
+
+  const moodLabel =
+    appr >= 85 ? 'глубокую привязанность и доверие'
+    : appr >= 70 ? 'очень тёплое, доверительное отношение'
+    : appr >= 50 ? 'скорее нейтральное, но внимательное отношение'
+    : appr >= 30 ? 'напряжение и сомнения'
+    : 'сильное недоверие или обиду';
+
+  const prompt = `
+Ты — ${char.name} (${char.username}) из семейной саги.
+
+БИО:
+${char.bio}
+
+Связи и отношения:
+${relationsSummary}
+
+Сейчас ты думаешь именно о игроке ${me.name}.
+Текущее отношение к нему: ${appr} из 100, это ${moodLabel}.
+
+Сформулируй одну короткую мысль о нём (1–2 предложения).
+Формат:
+- по-русски
+- без обращения к читателю
+- как внутренняя ремарка / наблюдение, например:
+  "Для него свобода всегда важнее правил, и это одновременно раздражает и восхищает."
+  "Слишком много упрямства в этом мальчике, но именно оно не даёт ему сломаться."
+
+НЕ упоминай, что ты персонаж игры, ИИ или что есть сервер.
+Ответь только текстом мысли, без пояснений.
+  `.trim();
+
+  const aiText = await askAI(prompt);
+  if (!aiText) return '';
+
+  const cleaned = aiText.replace(/\s+/g, ' ').trim();
+  const lower = cleaned.toLowerCase();
+
+  const badPhrases = [
+    'не могу нормально ответить',
+    'не могу сейчас нормально ответить',
+    'связь с сервером',
+    'я сейчас не могу'
+  ];
+  if (!cleaned ||
+      badPhrases.some(p => lower.includes(p))) {
+    return '';
+  }
+
+  return cleaned;
+}
+
+
 // === реакции ===
 let lastReactionPostId = null;
 
@@ -1696,11 +1827,6 @@ function setupFilters(){
       renderFeed();
     });
   });
-}
-
-function formatDelta(delta){
-  const sign = delta > 0 ? '+' : '';
-  return sign + delta.toFixed(2) + '%';
 }
 
 
