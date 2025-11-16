@@ -1633,15 +1633,15 @@ function setupComposeStory() {
 function paintIdea(){
   $('#ideaText').textContent = storyIdeas[ideaIdx] || 'Идей пока нет — нажми «Обновить идеи»';
 }
- // === ЛС ===
 
-// (ВОТ ЭТА ФУНКЦИЯ ПРОПАЛА)
-function threadKey(charId, playerId=state.activePlayerId){
+// ключ для переписки игрока с конкретным персонажем
+function threadKey(charId){
+  const playerId = state.activePlayerId;
   return `${charId}_${playerId}`;
 }
 
-// (А ЭТА БЫЛА СЛОМАНА)
 function syncDmSelectors(){
+
   const sel = $('#dmSelect');
   sel.innerHTML = state.characters.filter(c => c.id !== state.activePlayerId).map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
   
