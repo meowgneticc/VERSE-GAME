@@ -1142,12 +1142,13 @@ function load(){
 }
 
 // === модели постов / реакций ===
-function postObj({type, authorType, authorId, content, relatedCharacters=[], photoData=null}){
+function postObj({type, authorType, authorId, content, relatedCharacters=[], photoData=null, strangerName=null}){
   return {
     id: uid('post'),
     type,
     authorType,
     authorId,
+    strangerName,
     content,
     relatedCharacters,
     photoData,
@@ -1165,15 +1166,16 @@ function setActiveView(key){
   $$('.view').forEach(v=>v.classList.remove('active'));
   document.querySelector(`#view-${key}`).classList.add('active');
   $$('.tab').forEach(t=>t.classList.toggle('active', t.dataset.target===key));
+  
   if(key==='relations') renderRelations();
   if(key==='dm')        syncDmSelectors();
   if(key==='reactions') renderReactions();
-  if(key==='feed')      renderFeed();
-}
-function setupNav(){
-  $$('.tab').forEach(btn=>{
-    btn.addEventListener('click', ()=>setActiveView(btn.dataset.target));
-  });
+  
+  if(key==='feed') {
+    renderFeed();
+    // Кидаем кубик при переходе в ленту
+    triggerRandomNpcPost(); 
+  }
 }
 
 // === лента ===
@@ -1195,12 +1197,31 @@ function renderFeed(){
 }
 
 function renderPostHtml(p){
-  const author = p.authorType==='player'
-    ? state.players.find(pl=>pl.id===p.authorId)
-    : state.characters.find(c=>c.id===p.authorId);
+  
+  let name = 'Неизвестно';
+  let username = '@user';
+  let avatarHtml = '<div class="avatar" aria-hidden="true"></div>'; // Аватар по умолчанию
 
-  const name = author?.name ?? 'Неизвестно';
-  const username = author?.username ?? '@user';
+  if (p.authorType === 'player') {
+    const author = state.players.find(pl=>pl.id===p.authorId);
+    name = author?.name ?? 'Игрок';
+    username = author?.username ?? '@player';
+    // (позже можно будет добавить аватары игроков)
+
+  } else if (p.authorType === 'character') {
+    const author = state.characters.find(c=>c.id===p.authorId);
+    name = author?.name ?? 'Персонаж';
+    username = author?.username ?? '@character';
+    if (author?.avatar) { // Используем аватар персонажа
+      avatarHtml = `<div class="avatar"><img src="${author.avatar}" alt="${name}"></div>`;
+    }
+
+  } else if (p.authorType === 'stranger') {
+    name = p.strangerName;  // e.g., "Сплетница"
+    username = p.authorId;  // e.g., "@GossipFiend"
+    // (Незнакомцы остаются с аватаром по умолчанию)
+  }
+  
   const badge = p.type==='story' ? `<span class="badge">Сюжет</span>` : '';
   const photo = p.photoData ? `<div class="photo-preview"><img src="${p.photoData}" alt=""></div>` : '';
 
@@ -1219,8 +1240,7 @@ function renderPostHtml(p){
   return `
     <li class="post" id="${p.id}">
       <div class="post-head">
-        <div class="avatar" aria-hidden="true"></div>
-        <div class="meta">
+        ${avatarHtml} <div class="meta">
           <div class="name">${name} ${badge}</div>
           <div class="username">${username}</div>
         </div>
@@ -1466,7 +1486,7 @@ box.innerHTML = state.characters.filter(c => c.id !== state.activePlayerId).map(
 // === создание обычного поста ===
 function setupComposeSocial(){
   
-  // (Я восстановил этот код, ты его случайно удалил)
+
   $('#composePhoto').addEventListener('change', (e) => {
      const file = e.target.files[0];
      if(file){
@@ -1524,9 +1544,10 @@ function setupComposeSocial(){
 
     save();
     renderFeed();
+    triggerNpcPostGeneration(p);
+    triggerStrangerPosts(p
     setActiveView('feed');
   };
-} // <--- УБЕДИСЬ, ЧТО ЗДЕСЬ НЕТ ЛИШНЕЙ } СКОБКИ
 
 // === сюжетный пост ===
 
@@ -1600,6 +1621,8 @@ function setupComposeStory() {
 
     save();
     renderFeed();
+    triggerNpcPostGeneration(p);
+    triggerStrangerPosts(p);
     setActiveView('feed');
   };
 }
@@ -1799,6 +1822,439 @@ ${relationsSummary}
   return cleaned;
 }
 
+// Генерация ПУБЛИЧНОГО поста (твита) от лица NPC (в ответ игроку)
+async function aiGenerateNpcPost(char, player, playerPost) {
+  const relationsSummary = buildRelationsSummary(char);
+  const shortPlayerPost = clip(playerPost.content, 150);
+  
+  // Мы берем "секретную мысль" персонажа
+  const privateThought = char.lastThought; 
+
+  const prompt = `
+Ты — персонаж ${char.name} (${char.username}) из семейной саги.
+Твоя биография и канон:
+${char.bio}
+Твои связи с другими:
+${relationsSummary}
+
+Только что, игрок ${player.name} (${player.username}) опубликовал пост:
+"""${shortPlayerPost}"""
+
+Твоя НЕМЕДЛЕННАЯ, ПЕРВАЯ, СЕКРЕТНАЯ мысль об этом посте была:
+"""${privateThought}"""
+
+ЗАДАЧА:
+Основываясь на своей личности, каноне И этой своей секретной мысли, напиши короткий, публичный "твит" (пост в соцсеть) от своего имени.
+Это может быть прямая реакция на пост ${player.name} или просто мысль "по мотивам".
+
+ТРЕБОВАНИЯ:
+1.  **Это ПУБЛИЧНЫЙ пост.** Он должен быть в твоём стиле (${char.tone}).
+2.  **Формат:** Коротко (1-3 предложения), по-русски, от первого лица (от ${char.name}).
+3.  **НИКАКИХ** хэштегов, смайликов, или обращений к "серверу" / "ИИ".
+4.  **ВАЖНО:** Если твоя "секретная мысль" ("${privateThought}") была нейтральной, или тебе нечего сказать публично — просто верни ПУСТУЮ СТРОКУ.
+
+Ответь ТОЛЬКО текстом твита, или пустой строкой.
+`.trim();
+
+  const aiText = await askAI(prompt);
+  if (!aiText) return null; // Ошибка ИИ
+
+  const cleaned = aiText.replace(/^"|"$/g, '').trim(); 
+  const lower = cleaned.toLowerCase();
+  const badPhrases = [
+    'не могу', 'сервер', 'ошибка', 'я не знаю', 'как ии', 'как персонаж',
+    'твит:', 'пост:', 'я напишу:', 'хорошо, вот', 'пустая строка'
+  ];
+  
+  if (!cleaned || cleaned.length < 10 || badPhrases.some(p => lower.includes(p))) {
+    return null; 
+  }
+
+  return cleaned;
+}
+
+
+// Генерация СЛУЧАЙНОГО поста (твита) от лица NPC
+async function aiGenerateRandomNpcPost(char) {
+  const relationsSummary = buildRelationsSummary(char);
+
+  const prompt = `
+Ты — персонаж ${char.name} (${char.username}) из семейной саги.
+Твоя биография и канон:
+${char.bio}
+Твои связи с другими:
+${relationsSummary}
+
+ЗАДАЧКА:
+Напиши короткий, публичный "твит" (пост в соцсеть) от своего имени.
+Это должна быть **случайная мысль** о твоей жизни, твоих делах, твоем мнении о ДРУГОМ ПЕРСОНАЖЕ (не об игроке) или о каком-то событии в мире.
+**ВАЖНО: Этот пост НЕ является ответом на пост игрока.** Это просто твоя мысль.
+
+ТРЕБОВАНИЯ:
+1.  **Это ПУБЛИЧНЫЙ пост.** Он должен быть в твоём стиле (${char.tone}).
+2.  **Формат:** Коротко (1-3 предложения), по-русски, от первого лица (от ${char.name}).
+3.  **НИКАКИХ** хэштегов, смайликов, или обращений к "серверу" / "ИИ".
+4.  **ВАЖНО:** Если тебе нечего сказать — просто верни ПУСТУЮ СТРОКУ.
+
+Ответь ТОЛЬКО текстом твита, или пустой строкой.
+`.trim();
+
+  const aiText = await askAI(prompt);
+  if (!aiText) return null; // Ошибка ИИ
+
+  const cleaned = aiText.replace(/^"|"$/g, '').trim(); 
+  const lower = cleaned.toLowerCase();
+  const badPhrases = [
+    'не могу', 'сервер', 'ошибка', 'я не знаю', 'как ии', 'как персонаж',
+    'твит:', 'пост:', 'я напишу:', 'хорошо, вот', 'пустая строка'
+  ];
+  
+  if (!cleaned || cleaned.length < 10 || badPhrases.some(p => lower.includes(p))) {
+    return null; // NPC решил промолчать
+  }
+
+  return cleaned;
+}
+
+// Эта функция запускает "вдогонку" генерацию постов от NPC
+async function triggerNpcPostGeneration(playerPost) {
+  const charactersToReact = getRelevantCharacters(playerPost);
+  const player = state.players.find(p => p.id === playerPost.authorId);
+  let newPostsGenerated = false;
+
+  console.log(`Запускаем генерацию NPC-постов в ответ на пост ${player.name}...`);
+
+  for (const char of charactersToReact) {
+    let postCount = 0;
+    const roll = Math.random();
+    
+    if (roll > 0.95) {      // 5% шанс на 2 поста
+      postCount = 2;
+    } else if (roll > 0.6) { // 35% шанс на 1 пост
+      postCount = 1;         // (60% шанс на 0 постов)
+    }
+
+    for (let i = 0; i < postCount; i++) {
+      const postContent = await aiGenerateNpcPost(char, player, playerPost);
+      
+      if (postContent) {
+        const p = postObj({
+          type: 'social', 
+          authorType: 'character',
+          authorId: char.id,
+          content: postContent,
+          relatedCharacters: [playerPost.authorId] 
+        });
+        
+        state.posts.push(p);
+        newPostsGenerated = true;
+        console.log(`${char.name} опубликовал пост: "${postContent}"`);
+      }
+    }
+  }
+
+  if (newPostsGenerated) {
+    console.log('NPC закончили постить, обновляем ленту.');
+    save(); 
+    
+    if ($('#view-feed').classList.contains('active')) {
+      renderFeed();
+    }
+  }
+}
+
+// Эта функция запускает СЛУЧАЙНЫЙ пост от NPC
+async function triggerRandomNpcPost() {
+  const CHANCE = 0.25; // 25% шанс на случайный пост
+  
+  if (Math.random() > CHANCE) {
+    console.log('Случайный пост NPC: не сработало (шанс 25%)');
+    return;
+  }
+
+  console.log('Случайный пост NPC: Сработало! Выбираем персонажа...');
+  
+  const char = choice(state.characters);
+  const postContent = await aiGenerateRandomNpcPost(char);
+
+  if (postContent) {
+    console.log(`Случайный пост от ${char.name}: "${postContent}"`);
+    const p = postObj({
+      type: 'social',
+      authorType: 'character',
+      authorId: char.id,
+      content: postContent,
+      relatedCharacters: []
+    });
+    
+    state.posts.push(p);
+    save();
+    
+    if ($('#view-feed').classList.contains('active')) {
+      renderFeed();
+    }
+  } else {
+    console.log(`Случайный пост NPC: ${char.name} решил промолчать.`);
+  }
+}
+
+// (Вставь этот блок ПОСЛЕ aiGenerateProfileThought)
+
+// Генерация ПУБЛИЧНОГО поста (твита) от лица NPC (в ответ игроку)
+async function aiGenerateNpcPost(char, player, playerPost) {
+  const relationsSummary = buildRelationsSummary(char);
+  const shortPlayerPost = clip(playerPost.content, 150);
+  const privateThought = char.lastThought; 
+
+  const prompt = `
+Ты — персонаж ${char.name} (${char.username}) из семейной саги.
+Твоя биография и канон: ${char.bio}
+Твои связи с другими: ${relationsSummary}
+Только что, игрок ${player.name} (${player.username}) опубликовал пост: """${shortPlayerPost}"""
+Твоя СЕКРЕТНАЯ мысль об этом посте была: """${privateThought}"""
+
+ЗАДАЧА:
+Основываясь на своей личности И этой своей секретной мысли, напиши короткий, публичный "твит" (пост в соцсеть) от своего имени.
+ТРЕБОВАНИЯ:
+1.  **Это ПУБЛИЧНЫЙ пост.** В твоём стиле (${char.tone}).
+2.  **Формат:** Коротко (1-3 предложения), по-русски, от первого лица (от ${char.name}).
+3.  **НИКАКИХ** хэштегов, смайликов, или обращений к "серверу" / "ИИ".
+4.  **ВАЖНО:** Если твоя "секретная мысль" ("${privateThought}") была нейтральной, или тебе нечего сказать публично — просто верни ПУСТУЮ СТРОКУ.
+Ответь ТОЛЬКО текстом твита, или пустой строкой.
+`.trim();
+
+  const aiText = await askAI(prompt);
+  if (!aiText) return null;
+  const cleaned = aiText.replace(/^"|"$/g, '').trim(); 
+  const lower = cleaned.toLowerCase();
+  const badPhrases = ['не могу', 'сервер', 'ошибка', 'я не знаю', 'как ии', 'как персонаж', 'твит:', 'пост:', 'я напишу:', 'хорошо, вот', 'пустая строка'];
+  if (!cleaned || cleaned.length < 10 || badPhrases.some(p => lower.includes(p))) {
+    return null; 
+  }
+  return cleaned;
+}
+
+// Генерация СЛУЧАЙНОГО поста (твита) от лица NPC
+async function aiGenerateRandomNpcPost(char) {
+  const relationsSummary = buildRelationsSummary(char);
+  const prompt = `
+Ты — персонаж ${char.name} (${char.username}) из семейной саги.
+Твоя биография и канон: ${char.bio}
+Твои связи с другими: ${relationsSummary}
+
+ЗАДАЧКА:
+Напиши короткий, публичный "твит" (пост в соцсеть) от своего имени.
+Это должна быть **случайная мысль** о твоей жизни, твоих делах, твоем мнении о ДРУГОМ ПЕРСОНАЖЕ (не об игроке) или о каком-то событии в мире.
+**ВАЖНО: Этот пост НЕ является ответом на пост игрока.** Это просто твоя мысль.
+ТРЕБОВАНИЯ:
+1.  **Это ПУБЛИЧНЫЙ пост.** В твоём стиле (${char.tone}).
+2.  **Формат:** Коротко (1-3 предложения), по-русски, от первого лица (от ${char.name}).
+3.  **НИКАКИХ** хэштегов, смайликов, или обращений к "серверу" / "ИИ".
+4.  **ВАЖНО:** Если тебе нечего сказать — просто верни ПУСТУЮ СТРОКУ.
+Ответь ТОЛЬКО текстом твита, или пустой строкой.
+`.trim();
+
+  const aiText = await askAI(prompt);
+  if (!aiText) return null;
+  const cleaned = aiText.replace(/^"|"$/g, '').trim(); 
+  const lower = cleaned.toLowerCase();
+  const badPhrases = ['не могу', 'сервер', 'ошибка', 'я не знаю', 'как ии', 'как персонаж', 'твит:', 'пост:', 'я напишу:', 'хорошо, вот', 'пустая строка'];
+  if (!cleaned || cleaned.length < 10 || badPhrases.some(p => lower.includes(p))) {
+    return null;
+  }
+  return cleaned;
+}
+
+// Генерация поста от "НЕЗНАКОМЦА" (пресса, слухи, обыватели)
+async function aiGenerateStrangerPost(playerPost, worldContext, authorName, authorUsername) {
+  const shortPlayerPost = clip(playerPost.content, 150);
+  const prompt = `
+ТЫ — ГЕНЕРАТОР "ГОЛОСА УЛИЦ" для симуляции социальной сети.
+Твоя задача — создать ОДИН пост от случайного, неизвестного жителя, новостного агентства или желтой прессы.
+
+КОНТЕКСТ МИРА (КЛЮЧЕВЫЕ ТЕМЫ):
+${worldContext}
+
+ПОСЛЕДНИЙ ПОСТ (ТРИГГЕР):
+${authorName} (${authorUsername}) написал: """${shortPlayerPost}"""
+
+ЗАДАЧА:
+Сгенерируй пост от "незнакомца". Этот пост может быть:
+1.  **Новость:** (напр., "@LocalNews"): "Сообщают о..."
+2.  **Желтая пресса:** (напр., "@GossipFiend"): "СЛУХИ: Говорят, что Грейсон Блейдмор..."
+3.  **Слух:** (напр., "@WhisperNet"): "Слышал, [Персонаж] опять..."
+4.  **Мнение о мире:** (напр., "@HorsesLover"): "Ферма Кассандры - лучшее место..."
+5.  **Реакция на игрока:** (напр., "@ConcernedCitizen"): "Видел пост ${authorUsername}. Неужели он..."
+
+ТРЕБОВАНИЯ К ФОРМАТУ ВЫВОДА:
+Ответь СТРОГО в формате JSON.
+{
+  "username": "@generated_user",
+  "name": "Generated Name",
+  "postContent": "Текст поста здесь. Он может быть позитивным, негативным или грязной сплетней. Будь креативным."
+}
+
+ВАЖНО:
+- @username должен быть на английском, "name" и "postContent" - на русском.
+- Если сгенерировать пост не получается, верни: { "username": null }
+`.trim();
+
+  const aiText = await askAI(prompt);
+  if (!aiText) return null;
+  try {
+    const data = JSON.parse(aiText);
+    if (!data.username || !data.name || !data.postContent) {
+      console.warn("AI returned incomplete JSON for stranger post:", aiText);
+      return null;
+    }
+    return data;
+  } catch (e) {
+    console.error("AI returned invalid JSON for stranger post:", aiText);
+    return null;
+  }
+}
+
+// (Вставь этот блок ПОСЛЕ Шага 3, но ПЕРЕД // === реакции ===)
+
+// Эта функция запускает "вдогонку" генерацию постов от NPC (ПАРАЛЛЕЛЬНАЯ ВЕРСИЯ)
+async function triggerNpcPostGeneration(playerPost) {
+  const charactersToReact = getRelevantCharacters(playerPost);
+  const player = state.players.find(p => p.id === playerPost.authorId);
+  
+  console.log(`[Параллельно] Запускаем генерацию NPC-постов в ответ на пост ${player.name}...`);
+
+  const postGenerationPromises = [];
+
+  for (const char of charactersToReact) {
+    let postCount = 0;
+    const roll = Math.random();
+    if (roll > 0.95) postCount = 2;
+    else if (roll > 0.6) postCount = 1;
+
+    for (let i = 0; i < postCount; i++) {
+      postGenerationPromises.push(
+        aiGenerateNpcPost(char, player, playerPost).then(postContent => {
+          if (postContent) {
+            return postObj({
+              type: 'social', 
+              authorType: 'character',
+              authorId: char.id,
+              content: postContent,
+              relatedCharacters: [playerPost.authorId] 
+            });
+          }
+          return null; // Если ИИ промолчал
+        })
+      );
+    }
+  }
+
+  // Ждем, пока ВСЕ посты будут сгенерированы
+  const newPosts = (await Promise.all(postGenerationPromises))
+                       .filter(p => p !== null); // Убираем тех, кто промолчал
+
+  if (newPosts.length > 0) {
+    console.log(`[Параллельно] NPC сгенерировали ${newPosts.length} постов, добавляем...`);
+    state.posts.push(...newPosts); // Добавляем все новые посты в state
+    
+    save(); 
+    if ($('#view-feed').classList.contains('active')) {
+      renderFeed();
+    }
+  }
+}
+
+// Эта функция запускает СЛУЧАЙНЫЙ пост от NPC
+async function triggerRandomNpcPost() {
+  const CHANCE = 0.25; // 25% шанс на случайный пост
+  if (Math.random() > CHANCE) {
+    console.log('Случайный пост NPC: не сработало (шанс 25%)');
+    return;
+  }
+  console.log('Случайный пост NPC: Сработало! Выбираем персонажа...');
+  const char = choice(state.characters);
+  const postContent = await aiGenerateRandomNpcPost(char);
+
+  if (postContent) {
+    console.log(`Случайный пост от ${char.name}: "${postContent}"`);
+    const p = postObj({
+      type: 'social',
+      authorType: 'character',
+      authorId: char.id,
+      content: postContent,
+      relatedCharacters: []
+    });
+    state.posts.push(p);
+    save();
+    if ($('#view-feed').classList.contains('active')) {
+      renderFeed();
+    }
+  } else {
+    console.log(`Случайный пост NPC: ${char.name} решил промолчать.`);
+  }
+}
+
+// Эта функция запускает "вдогонку" 2-10 постов от "незнакомцев" (ПАРАЛЛЕЛЬНАЯ ВЕРСИЯ)
+async function triggerStrangerPosts(playerPost) {
+  const postCount = randint(2, 10);
+  console.log(`[Параллельно] Запускаем генерацию ${postCount} постов от "незнакомцев"...`);
+  
+  const author = (playerPost.authorType === 'player')
+    ? state.players.find(p => p.id === playerPost.authorId)
+    : state.characters.find(c => c.id === playerPost.authorId);
+  
+  if (!author) return; 
+  
+  const authorName = author.name;
+  const authorUsername = author.username || playerPost.authorId;
+
+  const characterContext = state.characters
+    .map(c => `- ${c.name} (${c.username}): ${clip(c.bio, 70)}`)
+    .join('\n');
+  
+  const worldContext = `
+- **Игрок, вызвавший событие:** ${authorName} (${authorUsername}).
+- **Ключевые персонажи (цели для слухов):**
+${characterContext}
+- **Другие темы мира:** Семья Блейдмор (адвокаты), Семья Блэкволл (ювелиры), Рок-группа "Ash&mercury", Ферма Кассандры (лошади), Клиника "Family Hart", Университет.
+  `.trim();
+
+  // 1. Создаем "стопку" "обещаний"
+  const postGenerationPromises = [];
+
+  for (let i = 0; i < postCount; i++) {
+    // 2. Добавляем "обещание" в стопку
+    postGenerationPromises.push(
+      aiGenerateStrangerPost(playerPost, worldContext, authorName, authorUsername).then(data => {
+        if (data && data.username && data.postContent) {
+          return postObj({
+            type: 'social',
+            authorType: 'stranger',
+            authorId: data.username,
+            strangerName: data.name,
+            content: data.postContent,
+            relatedCharacters: [] 
+          });
+        }
+        return null;
+      })
+    );
+  }
+
+  // 3. Ждем, пока ВСЕ "обещания" выполнятся
+  const newPosts = (await Promise.all(postGenerationPromises))
+                       .filter(p => p !== null); // Убираем "пустые"
+
+  // 4. Сохраняем и обновляем ленту
+  if (newPosts.length > 0) {
+    console.log(`[Параллельно] Незнакомцы сгенерировали ${newPosts.length} постов, обновляем...`);
+    state.posts.push(...newPosts);
+    save(); 
+    if ($('#view-feed').classList.contains('active')) {
+      renderFeed();
+    }
+  }
+}
 
 // === реакции ===
 let lastReactionPostId = null;
@@ -2041,6 +2497,8 @@ document.addEventListener('DOMContentLoaded', ()=>{
   setupMyProfileButton();
   renderFeed();
   renderRelations();
+  triggerRandomNpcPost();
+  triggerRandomNpcPost();
 });
 </script>
 
