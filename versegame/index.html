@@ -1196,18 +1196,7 @@ function setupDm(){
     }
   };
 
-  // спонтанные сообщения пока оставляем простыми шаблонными
-  setInterval(()=>{
-    if(!$('#dmAutoToggle').checked) return;
-    if(!state.characters.length) return;
-    const char = choice(state.characters);
-    if(Math.random() < 0.25){
-      const txt = generateBotSpontaneousText(char);
-      pushMessage(char.id, char.id, txt);
-    }
-  }, 20000);
-}
-
+ 
 
 function botReplyLater(charId, playerText){
   const char = state.characters.find(c=>c.id===charId);
