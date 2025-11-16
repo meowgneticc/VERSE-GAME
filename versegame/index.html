@@ -568,7 +568,64 @@ const fmtTime = (iso) => new Date(iso).toLocaleString();
 const randint = (a,b)=>Math.floor(Math.random()*(b-a+1))+a;
 const choice = (arr)=>arr[Math.floor(Math.random()*arr.length)];
 const clamp=(x,min,max)=>Math.max(min,Math.min(max,x));
+// === ИИ (Gemini) для ЛС ===
+async function askAI(promptText) {
+  try {
+    const res = await fetch('/api/gemini', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: promptText })
+    });
 
+    const data = await res.json();
+
+    if (!data.ok || !data.answer) {
+      console.error('AI error response', data);
+      return 'Кажется, я сейчас не могу нормально ответить.';
+    }
+
+    return data.answer.trim();
+  } catch (err) {
+    console.error('AI network error', err);
+    return 'Связь с сервером пропала, давай позже.';
+  }
+}
+
+async function aiReplyToDm(charId) {
+  const char = state.characters.find(c => c.id === charId);
+  if (!char) return;
+
+  const me = currentPlayer();
+  const key = threadKey(charId);
+  const history = state.dms[key] || [];
+
+  const historyText = history.map(m => {
+    const whoName = m.from === state.activePlayerId ? me.name : char.name;
+    return `${whoName}: ${m.text}`;
+  }).join('\n');
+
+  const prompt = `
+Ты — персонаж ${char.name} (${char.username}) в переписке в личных сообщениях вымышленной социальной сети.
+
+Краткое описание персонажа:
+${char.bio}
+
+Тон общения: ${char.tone}.
+Отношения с игроком ${me.name}: ${char.approval[state.activePlayerId] ?? 50} из 100.
+
+История переписки между тобой и игроком:
+${historyText}
+
+Сейчас, от лица ${char.name}, ответь на последнее сообщение игрока.
+Пиши по-русски, в 1–3 коротких реплиях, без описания действий, только текст сообщений.
+`;
+  const aiText = await askAI(prompt);
+  if (!aiText) return;
+
+  pushMessage(charId, charId, aiText);
+}
+
+  
 let state = {
   players: [
     { id:'player1', name:'Грейсон',  username:'@LiqueurD',   followers:320 },
@@ -1085,15 +1142,24 @@ function setupDm(){
     $('#dmTitle').textContent = 'ЛС · ' + (c?.name || '');
     renderDmThread(id);
   });
-  $('#dmSend').onclick = ()=>{
+
+  // отправка сообщения + ИИ-ответ
+  $('#dmSend').onclick = async ()=>{
     const charId = $('#dmSelect').value;
     const text = $('#dmInput').value.trim();
-    if(!text) return;
+    if (!text) return;
+
+    // сообщение от активного игрока
     pushMessage(charId, state.activePlayerId, text);
-    $('#dmInput').value='';
-    botReplyLater(charId, text);
+    $('#dmInput').value = '';
+
+    // если включён чекбокс "Бот может писать сам" — зовём ИИ
+    if ($('#dmAutoToggle').checked) {
+      await aiReplyToDm(charId);
+    }
   };
 
+  // спонтанные сообщения пока оставляем простыми шаблонными
   setInterval(()=>{
     if(!$('#dmAutoToggle').checked) return;
     if(!state.characters.length) return;
@@ -1104,6 +1170,7 @@ function setupDm(){
     }
   }, 20000);
 }
+
 
 function botReplyLater(charId, playerText){
   const char = state.characters.find(c=>c.id===charId);
