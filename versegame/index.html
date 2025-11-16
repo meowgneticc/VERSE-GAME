@@ -890,8 +890,6 @@ let state = {
   }
 };
 
-const LS_KEY = 'verse_state_v2_grayson_loran';
-
 // ВНЕ state (отдельно!)
 function migrateStateSchema(){
   if(!state.npcs)       state.npcs = [];
@@ -1147,33 +1145,94 @@ function seedIfEmpty(){
 
 // === сохранение / загрузка ===
 function save(){
-try {
- localStorage.setItem(LS_KEY, JSON.stringify(state));
-} catch(e) {
- console.error('save error', e);
-}
+  try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }catch(e){}
 }
 
 function load(){
-try {
- const raw = localStorage.getItem(LS_KEY);
- if (raw) state = JSON.parse(raw);
-} catch(e) {
- console.error('load error', e);
+  try{
+    const raw = localStorage.getItem(LS_KEY);
+    if(raw) state = JSON.parse(raw);
+  }catch(e){}
+
+  // приводим схему к актуальной
+  migrateStateSchema();
+
+  // создаём персонажей/стартовые посты, если пусто
+  seedIfEmpty();
+
+  function seedWorldAccounts(){
+  if (state.npcs.length || state.outlets.length) return;
+
+  const tones = ['warm','stoic','sharp','chaotic'];
+  const topics = state.world.topics;
+
+  const handleBits = {
+    horses: ['horseslover','hoofbeats','stableaddict','ride4life','cavalier','coltwatch'],
+    music:  ['ashfan','riffhunter','vinylcity','gigguide','ampjunkie'],
+    family: ['familyfirst','blademorewatch','homevibes','parenttalk'],
+    gossip: ['CityRumors','TeaSpill','SpiceWire','WhisperLane','DailyDust'],
+    nightlife:['afterdark','clubtrail','midnightowl','citylights'],
+    university:['campusbee','studyflow','libratalk'],
+    sports:  ['varsitywatch','balltalk','arenaecho'],
+    tech:    ['techpulse','devglance','codetips'],
+    citylife:['urbansight','streetnotes','townsquare']
+  };
+
+  function makeHandle(topic){
+    const pool = handleBits[topic] || ['feedline','localvoice','randomuser'];
+    const base = choice(pool);
+    const suffix = Math.random()<0.5 ? '' : Math.floor(10+Math.random()*89);
+    return '@' + (base + suffix);
+  }
+
+  function makeName(){
+    const first = ['Саша','Кира','Макс','Аня','Денис','Лия','Игорь','Ника','Ян','Мила','Тимур','Рита','Федя','Юля','Гоша'];
+    const last  = ['Ильин','Савина','Туманова','Лебедев','Громова','Волков','Мельник','Котова','Руднев','Смирнова','Назаров'];
+    return `${choice(first)} ${choice(last)}`;
+  }
+
+  // 28–36 обычных NPC
+  const npcCount = randint(28,36);
+  for (let i=0;i<npcCount;i++){
+    const t = choice(topics);
+    state.npcs.push({
+      id: uid('npc'),
+      name: '',
+      username: makeHandle(t),
+      tone: choice(tones),
+      topic: t,
+      bio: `Обычный житель города, интересуется: ${t}.`
+    });
+  }
+
+  // СМИ: новости + таблоиды
+  const outlets = [
+    { name:'Город Сегодня',   topic:'citylife', type:'news'   },
+    { name:'Кантер-Таун News',topic:'citylife', type:'news'   },
+    { name:'Светская Лупа',   topic:'gossip',   type:'tabloid'},
+    { name:'Daily Dust',      topic:'gossip',   type:'tabloid'}
+  ];
+
+  state.outlets = outlets.map(o=>({
+    id: uid('outlet'),
+    name: o.name,
+    username: makeHandle(o.topic),
+    tone: o.type==='news' ? 'stoic' : 'sharp',
+    outletType: o.type,
+    topic: o.topic,
+    bio: o.type==='news'
+      ? 'Местные новости, коротко и по делу.'
+      : 'Громкие заголовки, слухи и сплетни.'
+  }));
 }
 
-// приводим объект state к актуальной схеме
-migrateStateSchema();
 
-// если персонажей/постов нет — создаём стартовые
-seedIfEmpty();
+  // создаём NPC и медиа, если их ещё нет
+  seedWorldAccounts();
 
-// создаём NPC и медиа, если их ещё нет
-seedWorldAccounts();
-
-// и сразу сохраняем обновлённое состояние
-save();
+  save();
 }
+
 
 
 // === модели постов / реакций ===
@@ -1610,7 +1669,6 @@ function setupComposeSocial(){
     triggerNpcPostGeneration(p);
     setActiveView('feed');
   };
-} // <--- УБЕДИСЬ, ЧТО ЗДЕСЬ НЕТ ЛИШНЕЙ } СКОБКИ
 
 // === сюжетный пост ===
 
