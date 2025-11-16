@@ -732,17 +732,19 @@ async function askAI(promptText) {
 
     const data = await res.json();
 
+    // если ответ пустой или с ошибкой — считаем, что ИИ не сработал
     if (!data.ok || !data.answer) {
       console.error('AI error response', data);
-      return 'Кажется, я сейчас не могу нормально ответить.';
+      return null;              // <— ВАЖНО: возвращаем null, а не текст
     }
 
     return data.answer.trim();
   } catch (err) {
     console.error('AI network error', err);
-    return 'Связь с сервером пропала, давай позже.';
+    return null;                // <— и тут тоже null
   }
 }
+
 
 async function aiReplyToDm(charId) {
   const char = state.characters.find(c => c.id === charId);
