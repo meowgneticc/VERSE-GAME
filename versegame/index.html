@@ -1905,15 +1905,169 @@ async function aiGenerateReactionText(char, player, post, delta, isStory) {
   return generateThought(char, post, delta); // Упрощенный fallback
 }
 
-// ... (Остальные функции AI: aiGenerateProfileThought, worldSnapshot, aiGenerateAmbientCharacterTweet, 
-// aiGenerateNpcWorldTweet, fallbackNpcTweet, aiGenerateOutletPost, fallbackOutletTweet, aiGenerateNpcPost)
+// Короткая сводка мира для постов (что сейчас происходит в ленте)
+function worldSnapshot(limit = 8) {
+  const posts = state.posts.slice().sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).slice(0,limit);
 
+  if (!posts.length) {
+    return 'Пока в ленте почти ничего нет, можно стать первым, кто что-то напишет.';
+  }
 
-// Эта функция запускает «вдогонку» генерацию постов
-async function triggerNpcPostGeneration(playerPost) {
-  // ... (Логика фоновой генерации постов)
+  const lines = posts.map(p => {
+    const a = getAuthorByType(p.authorType, p.authorId);
+    const who = a?.username || a?.name || 'кто-то';
+    const tag = p.type === 'story' ? '[сюжет]' : '';
+    const text = clip((p.content || '').replace(/\n/g,' '), 120);
+    return `• ${who} ${tag}: ${text}`;
+  });
+
+  return lines.join('\n');
 }
 
+// Подбор кандидатов для @упоминаний
+function pickMentionCandidates(char, max = 3) {
+  const seen = new Set();
+  const result = [];
+
+  function pushIfOk(id) {
+    if (!id || id === char.id || seen.has(id)) return;
+    let obj = state.characters.find(c => c.id === id) || state.players.find(p => p.id === id);
+    if (!obj) return;
+    seen.add(id);
+    result.push(obj);
+  }
+
+  // сначала — явные связи
+  if (char.relations) {
+    for (const otherId of Object.keys(char.relations)) {
+      pushIfOk(otherId);
+    }
+  }
+
+  // потом — те, к кому есть approval
+  if (char.approval) {
+    for (const otherId of Object.keys(char.approval)) {
+      pushIfOk(otherId);
+    }
+  }
+
+  // если всё равно мало — добираем случайных
+  const extraPool = state.characters
+    .filter(c => c.id !== char.id && !seen.has(c.id));
+  extraPool.sort(() => Math.random() - 0.5);
+  for (const c of extraPool) {
+    if (result.length >= max) break;
+    pushIfOk(c.id);
+  }
+
+  return result.slice(0, max);
+}
+
+// Запасной вариант «твита», если AI не ответил
+function fallbackNpcTweet(char) {
+  const base = [
+    'Почему взрослую жизнь никто не снабдил инструкцией?',
+    'Иногда тишина громче любых уведомлений.',
+    'Кажется, я опять ввязался во что-то странное.',
+    'Кто-нибудь, отмените утро, я не готов(а).',
+    'Иногда проще сделать вид, что всё в порядке.'
+  ];
+  return choice(base);
+}
+
+// Генерация поста в ленту от имени персонажа (в стиле Твиттера)
+async function aiGenerateAmbientCharacterTweet(char, playerPost = null) {
+  const relationsSummary = buildRelationsSummary(char);
+  const snapshot = worldSnapshot();
+  const mentions = pickMentionCandidates(char, 3);
+  const mentionsList = mentions.length
+    ? mentions.map(o => `- ${o.name} (${o.username || '@user'})`).join('\n')
+    : 'Нет обязательных упоминаний.';
+
+  const reactedText = playerPost
+    ? `Только что ${authorName(playerPost)} написал(а): "${clip(playerPost.content || '', 160)}". Ты можешь отреагировать на это в своём посте, если это уместно, но не обязан(а).`
+    : 'Можешь просто писать о своей жизни и мыслях.';
+
+  const prompt = `
+Ты ведёшь аккаунт в вымышленной соцсети наподобие Твиттера от лица персонажа.
+
+Персонаж: ${char.name} (${char.username})
+Тон: ${char.tone}
+Краткая биография:
+${char.bio || '(био пока пусто)'}
+
+Связи и отношения:
+${relationsSummary}
+
+Вот обстановка в мире (последние посты):
+${snapshot}
+
+Люди, которых можно отметить в посте (если хочешь, не больше 1–2 упоминаний, формат @username):
+${mentionsList}
+
+${reactedText}
+
+Сгенерируй ОДИН короткий пост:
+- по-русски
+- 1–3 предложения, максимум ~280 символов
+- от первого лица
+- можно чуть остроумно, эмоционально или рефлексивно
+- без описания действий, только текст поста
+- без приветствий и подписи
+- без кавычек вокруг текста.
+
+Верни только сам текст поста.`;
+
+  const txt = await askAI(prompt);
+  const cleaned = (txt || '').trim().replace(/^["«»]+|["«»]+$/g, '');
+  if (!cleaned) return fallbackNpcTweet(char);
+  return cleaned;
+}
+
+// Эта функция запускает «вдогонку» генерацию постов
+// Каждый выбранный персонаж кидает кубик и пишет 0–2 поста
+async function triggerNpcPostGeneration(playerPost) {
+  try {
+    // 1) Берём самых релевантных к посту персонажей (по связям/упоминаниям)
+    const core = getRelevantCharacters(playerPost);
+
+    // 2) Добавляем чуть случайных, чтобы лента жила
+    const extraPool = state.characters.filter(c =>
+      !core.includes(c) && c.id !== state.activePlayerId
+    );
+    extraPool.sort(() => Math.random() - 0.5);
+    const extra = extraPool.slice(0, randint(0, 3));
+
+    const chars = [...core, ...extra];
+
+    const jobs = [];
+
+    for (const char of chars) {
+      const postsCount = randint(0, 2); // 🔮 0–2 поста
+      for (let i = 0; i < postsCount; i++) {
+        jobs.push((async () => {
+          const text = await aiGenerateAmbientCharacterTweet(char, playerPost);
+          if (!text) return;
+          const newPost = postObj({
+            type: 'social',
+            authorType: 'character',
+            authorId: char.id,
+            content: text,
+            relatedCharacters: [],
+            photoData: null
+          });
+          state.posts.push(newPost);
+        })());
+      }
+    }
+
+    await Promise.all(jobs);
+    save();
+    renderFeed();
+  } catch (e) {
+    console.error('Ошибка фоновой генерации постов NPC', e);
+  }
+}
 
 // === реакции ===
 let lastReactionPostId = null;
