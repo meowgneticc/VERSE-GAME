@@ -2043,7 +2043,7 @@ async function triggerNpcPostGeneration(playerPost) {
     const jobs = [];
 
     for (const char of chars) {
-      const postsCount = randint(0, 2); // 🔮 0–2 поста
+      const postsCount = randint(0, 2); // 0–2 поста
       for (let i = 0; i < postsCount; i++) {
         jobs.push((async () => {
           const text = await aiGenerateAmbientCharacterTweet(char, playerPost);
