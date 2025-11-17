@@ -2022,44 +2022,35 @@ ${mentionsHint}
   return cleaned;
 }
 
-// Эта функция запускает «вдогонку» генерацию постов
-// Каждый выбранный персонаж кидает кубик и пишет 0–2 поста
-// Важно: генерируем ПОСЛЕДОВАТЕЛЬНО, а не всеми запросами сразу
+// ВРЕМЕННАЯ тестовая версия: добавляет один простой пост от первого персонажа
 async function triggerNpcPostGeneration(playerPost) {
-  try {
-    // 1) Берём самых релевантных к посту персонажей (по связям/упоминаниям)
-    const core = getRelevantCharacters(playerPost);
+  console.log('[TEST] triggerNpcPostGeneration вызвана', playerPost?.id);
 
-    // 2) Добавляем чуть случайных, чтобы лента жила
-    const extraPool = state.characters.filter(c =>
-      !core.includes(c) && c.id !== state.activePlayerId
-    );
-    extraPool.sort(() => Math.random() - 0.5);
-    const extra = extraPool.slice(0, randint(0, 3));
+  // Берём просто первого персонажа из списка
+  const char = state.characters[0];
+  if (!char) {
+    console.warn('[TEST] Нет персонажей в state.characters');
+    return;
+  }
 
-    // Немного ограничим количество персонажей за один пост
-    const chars = [...core, ...extra].slice(0, 6);
+  const text = `Тестовый пост от ${char.name}: я реагирую на пост игрока "${clip(playerPost.content || '', 60)}"`;
 
-    for (const char of chars) {
-      const postsCount = randint(0, 2); // 0–2 поста для каждого
-      for (let i = 0; i < postsCount; i++) {
-        const text = await aiGenerateAmbientCharacterTweet(char, playerPost);
-        if (!text) continue;
+  const newPost = postObj({
+    type: 'social',
+    authorType: 'character',
+    authorId: char.id,
+    content: text,
+    relatedCharacters: [],
+    photoData: null
+  });
 
-        console.log('[AI tweet]', char.name, '→', text); // видно в консоли
+  state.posts.push(newPost);
+  save();
+  renderFeed();
 
-        const newPost = postObj({
-          type: 'social',
-          authorType: 'character',
-          authorId: char.id,
-          content: text,
-          relatedCharacters: [],
-          photoData: null
-        });
-        state.posts.push(newPost);
-        save();
-      }
-    }
+  console.log('[TEST] Добавили пост от персонажа', char.name);
+}
+
 
     renderFeed();
   } catch (e) {
