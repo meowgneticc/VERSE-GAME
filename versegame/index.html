@@ -2026,6 +2026,7 @@ ${reactedText}
 
 // Эта функция запускает «вдогонку» генерацию постов
 // Каждый выбранный персонаж кидает кубик и пишет 0–2 поста
+// Важно: генерируем ПОСЛЕДОВАТЕЛЬНО, а не всеми запросами сразу
 async function triggerNpcPostGeneration(playerPost) {
   try {
     // 1) Берём самых релевантных к посту персонажей (по связям/упоминаниям)
@@ -2038,36 +2039,36 @@ async function triggerNpcPostGeneration(playerPost) {
     extraPool.sort(() => Math.random() - 0.5);
     const extra = extraPool.slice(0, randint(0, 3));
 
-    const chars = [...core, ...extra];
-
-    const jobs = [];
+    // Немного ограничим количество персонажей за один пост
+    const chars = [...core, ...extra].slice(0, 6);
 
     for (const char of chars) {
-      const postsCount = randint(0, 2); // 0–2 поста
+      const postsCount = randint(0, 2); // 0–2 поста для каждого
       for (let i = 0; i < postsCount; i++) {
-        jobs.push((async () => {
-          const text = await aiGenerateAmbientCharacterTweet(char, playerPost);
-          if (!text) return;
-          const newPost = postObj({
-            type: 'social',
-            authorType: 'character',
-            authorId: char.id,
-            content: text,
-            relatedCharacters: [],
-            photoData: null
-          });
-          state.posts.push(newPost);
-        })());
+        const text = await aiGenerateAmbientCharacterTweet(char, playerPost);
+        if (!text) continue;
+
+        console.log('[AI tweet]', char.name, '→', text); // видно в консоли
+
+        const newPost = postObj({
+          type: 'social',
+          authorType: 'character',
+          authorId: char.id,
+          content: text,
+          relatedCharacters: [],
+          photoData: null
+        });
+        state.posts.push(newPost);
+        save();
       }
     }
 
-    await Promise.all(jobs);
-    save();
     renderFeed();
   } catch (e) {
     console.error('Ошибка фоновой генерации постов NPC', e);
   }
 }
+
 
 // === реакции ===
 let lastReactionPostId = null;
